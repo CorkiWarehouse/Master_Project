@@ -163,7 +163,7 @@ class MeanFieldModel(nn.Module):
         x2 = self.ReLU(self.layer2(x_cat))
         x3 = self.ReLU(self.layer3(x2))
         x4 = self.ReLU(self.layer4(x3))
-        value = torch.tanh(self.output(x4))
+        value = torch.sigmoid(self.output(x4))  # Use sigmoid to ensure output is between 0 and 1
         return value
 
 class PolicyModel(nn.Module):

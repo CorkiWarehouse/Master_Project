@@ -6,7 +6,7 @@ We let our cars run on a ring road with length = 1000
 
 So we suppose that we have 6 points on it as the state
     we have 10 times(including 0) points with difference = 5
-    [0, 5, 10, 15, 20, 25, 30, 35, 40, 45]
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 In the action, we also let it be in 1000(velocity)
     [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
@@ -111,8 +111,8 @@ class Env(Environment):
                 # and for we let it be the current_position and next_position
                 # TODO do we need to check all the valid action, or we can just ignore it
                 valid_actions = self.get_all_valid_actions(current_state,next_state)
-                print("current_state", current_state, "valid_actions", valid_actions)
-                print(valid_actions)
+                # print("current_state", current_state, "valid_actions", valid_actions)
+                # print(valid_actions)
                 test_set.update(valid_actions)
                 sum_policy_transition = 0
 
@@ -127,13 +127,13 @@ class Env(Environment):
                     sum_policy_transition += prob_transition*current_state_policy
 
                 # then we need to multiply it with mean field
-                print("sum_policy_transition", sum_policy_transition)
+                # print("sum_policy_transition", sum_policy_transition)
                 sum_next += sum_policy_transition * mean_field.val[current_state]
-                print("sum_next", sum_next)
+                # print("sum_next", sum_next)
 
 
             next_mean_field.val[next_state] = sum_next
-            print(test_set)
+            # print(test_set)
 
         # at last, we need to normalize the output
         # Normalize the mean field values so they sum to 1

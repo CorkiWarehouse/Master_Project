@@ -295,7 +295,7 @@ class PIAIRL():
                     )
 
                     tensor_list = new_policy.tolist()
-                    print(tensor_list)
+                    # print(tensor_list)
 
                     # here we update the policy flow
                     self.p_flow.val[t,s] = tensor_list
@@ -418,7 +418,7 @@ class PIAIRL():
                         we choose use the delt_t and delt_x to get the residual
                         For we can not add 2 value with different dimension 
                         
-                    And we let the random step size fe = 1 
+                    And we let the random step size fai = 1 
                     '''
 
                     # First part role_t
