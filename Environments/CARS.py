@@ -5,7 +5,7 @@ We let our cars run on a ring road with length = 1000
     which means that our cars can be in 1000 different points
 
 So we suppose that we have 6 points on it as the state
-    we have 10 times(including 0) points with difference = 5
+    we have 10 times(including 0) points with difference = 1
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 In the action, we also let it be in 1000(velocity)
@@ -14,7 +14,7 @@ In the action, we also let it be in 1000(velocity)
 In state, we have this options:
     [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
 
-
+And for we have the time
 
 """
 
@@ -45,6 +45,7 @@ class Env(Environment):
         # TODO Could we still use this value ?
         self.velocity_option = [round(0.1 * i, 2)  for i in range(1,self.action_shape+1)]  # here is all velocity choices
         self.state_option = [round(0.05 * i, 2)  for i in range(0,self.state_shape)]
+        self.current_velocity = [0 for i in range(self.state_shape)]
 
         # this value is replaced by the env.horizen
         self.total_time = 10 # time horizon
@@ -94,13 +95,9 @@ class Env(Environment):
         # init
         next_mean_field = MeanField(mean_field=None, s=self.state_shape)
 
-        '''
-        For we have the ring, we just need to notice the out of ring result:
-            Which is that we need to go back to 0 if we out of 999
-        '''
         # here is all the next_state
         for next_state in range(self.state_shape):
-            test_set = set()
+            test_set = []
             sum_next = 0
             # here is all the current state which can reach to next one
             # but for our time_unit is 5
@@ -113,7 +110,7 @@ class Env(Environment):
                 valid_actions = self.get_all_valid_actions(current_state,next_state)
                 # print("current_state", current_state, "valid_actions", valid_actions)
                 # print(valid_actions)
-                test_set.update(valid_actions)
+                test_set.extend(valid_actions)
                 sum_policy_transition = 0
 
                 # we directly check all the valid actions
@@ -140,6 +137,27 @@ class Env(Environment):
         total = np.sum(next_mean_field.val)
         if total > 0:  # Avoid division by zero
             next_mean_field.val /= total
+
+
+
+        '''
+        Now we consider a new way to update the mean_field
+            1. We just focus on this place's flow. 
+            2. We let last time's mean field + last place & last time's flow - current place & last time's flow
+            3. In another word: last time's value + change of the flow 
+            
+        Here is the code :
+            rho[i, t] = (
+                rho[i][t - 1]
+                + rho[i - 1, t - 1] * u[i - 1, t - 1]
+                - rho[i, t - 1] * u[i, t - 1]
+                )
+        '''
+
+        # So we could have
+        # for next_state in range(self.state_shape):
+        #     now_mean_field = mean_field[next_state]
+        #     last_velocity = policy.val[]
 
         return next_mean_field
 
@@ -190,8 +208,6 @@ class Env(Environment):
 
         # then get the next state's position
         next_location = (current_location + self.time_unit * current_action) % self.road_length
-
-
 
         next_state_index = self.state_option.index(round(next_location, 2))
 

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn.utils as U
+import torch.nn.functional as F
 from scipy.special import entr
 import torch.nn as nn
 
@@ -152,7 +153,10 @@ class PIAIRL():
                             torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample.states[t]))).to(self.device, torch.float),
                             torch.from_numpy(self.onehot_encoding(self.horizon, int(t))).to(self.device, torch.float)
                         )
-                estimated_mean_field_flow /= len(self.data_policy_theta)
+                for t in range(self.horizon):
+                    sum_values = estimated_mean_field_flow[t].sum()
+                    if sum_values > 0:
+                        estimated_mean_field_flow[t] /= sum_values
             else:
                 estimated_mean_field_flow = self.mf_flow.val
 
@@ -312,12 +316,13 @@ class PIAIRL():
 
 
                 # we also need to update the meanfield
-                self.train_mean_field(max_epoch, learning_rate, max_grad_norm, num_of_units)
+                self.train_mean_field(max_epoch//10, learning_rate, max_grad_norm, num_of_units)
 
 
 
 
             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
+            print(epoch)
 
         # send the most optimal back
         # this is the last
@@ -339,6 +344,7 @@ class PIAIRL():
         for epoch in range(max_epoch):
             # this value is used to replace "estimate mean field flow" in our code
             est_mf_flow = None
+            # print(epoch)
             for sample in self.data_policy_theta:
 
                 # get the mean field for this time and states
