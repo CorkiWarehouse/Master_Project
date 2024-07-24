@@ -6,7 +6,7 @@ Remainder value type:
     1. estimated_mean_field_flow : numpy.array()
 
 """
-
+import logging
 
 import numpy as np
 import torch
@@ -70,6 +70,21 @@ class PIAIRL():
 
         self.expert = Expert(env=env, horizon=self.horizon)
 
+        # Setup logging
+        self.logger = logging.getLogger('MFIRL_Training')
+        self.logger.setLevel(logging.INFO)  # Set log level to INFO
+
+        # Create file handler which logs even debug messages
+        fh = logging.FileHandler('PIAIRL_training_log.txt')
+        fh.setLevel(logging.INFO)
+
+        # Create formatter and add it to the handlers
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        fh.setFormatter(formatter)
+
+        # Add the handlers to logger
+        self.logger.addHandler(fh)
+
     # Saves the trained reward model to a specified path
     def save_model(self, path: str):
         assert self.reward_model is not None
@@ -114,6 +129,9 @@ class PIAIRL():
 
         self.p_flow.val = init_policy_flow
 
+        # Precompute all possible one-hot encodings for states and actions
+        state_encodings = torch.eye(self.env.state_shape).to(self.device)
+        action_encodings = torch.eye(self.env.action_shape).to(self.device)
 
         # here we use the expert meanfield to generate the trajectory
         init_est_expert_mf_flow = np.zeros((self.horizon, self.env.state_shape))
@@ -246,7 +264,7 @@ class PIAIRL():
             # So we use it to minmize the - of the sum
 
             optimizer_reward.zero_grad()
-            loss = - (estimated_expert_data + estimated_policy_data)
+            loss = (estimated_expert_data + estimated_policy_data).abs()
             loss.backward()
             U.clip_grad_norm_(reward_model.parameters(), max_grad_norm)
             optimizer_reward.step()
@@ -284,7 +302,7 @@ class PIAIRL():
 
                 # train the policy model
                 optimizer_policy.zero_grad()
-                loss2 = - (estimated_update)
+                loss2 = (estimated_update).abs()
                 loss2.backward()
                 U.clip_grad_norm_(policy_model.parameters(), max_grad_norm)
                 optimizer_policy.step()
@@ -316,13 +334,14 @@ class PIAIRL():
 
 
                 # we also need to update the meanfield
-                self.train_mean_field(max_epoch//10, learning_rate, max_grad_norm, num_of_units)
+                self.train_mean_field(max_epoch, learning_rate, max_grad_norm, num_of_units)
 
 
 
 
             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
-            print(epoch)
+            # print(epoch)
+            self.logger.info('=MFIRL: epoch:{}, loss:{}'.format(epoch, str(loss.detach().cpu().numpy())))
 
         # send the most optimal back
         # this is the last
@@ -407,15 +426,15 @@ class PIAIRL():
 
                     # time do not need one-hot
 
-                    # # then we need to train this one
-                    # # Compute gradients with autograd
-                    # mu_t = torch.autograd.grad(mean_field_now, t_onehot,
+                    # then we need to train this one
+                    # Compute gradients with autograd
+                    # mu_t = torch.autograd.grad(mean_field_now, torch.tensor([t], dtype=torch.float32, requires_grad=True),
                     #                            grad_outputs=torch.ones_like(mean_field_now),
                     #                            create_graph=True)[0]
                     #
                     # # mu * policy and its gradient
-                    # product = mean_field_now * velocity
-                    # product_x = torch.autograd.grad(product, x_onehot,
+                    # product = mean_field_now * velocity_now
+                    # product_x = torch.autograd.grad(product, torch.tensor([sample.states[t]], dtype=torch.float32, requires_grad=True),
                     #                     grad_outputs=torch.ones_like(product),
                     #                     create_graph=True)[0]
 
@@ -435,10 +454,11 @@ class PIAIRL():
 
                     # Compute the custom loss as described
                     loss = left + right
+
                     loss_total.append(loss)
 
                 # here is the optimal path
-                residual = torch.mean(torch.cat(loss_total,dim=0).reshape((1, -1)))
+                residual = torch.mean(torch.cat(loss_total,dim=0).reshape((1, -1)).abs())
                 optimizer1.zero_grad()
                 residual.backward()
                 U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
@@ -446,6 +466,7 @@ class PIAIRL():
 
                 print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
                       end='\r')
+                self.logger.info('=Mean_Field: epoch:{}, loss:{}'.format(epoch, str(residual.detach().cpu().numpy())))
 
 
         self.mean_field_model = mean_field_model

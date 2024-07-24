@@ -65,7 +65,8 @@ class Env(Environment):
         self.name = 'FLOCK'
 
         # Here is the ont-hot encoding
-        self.state_shape = 5*5*4
+        # we consider 5*5's points
+        self.state_shape = 25
 
         # for we only allow 4 types actions, We only have action_shape = 4
         self.action_shape = 4

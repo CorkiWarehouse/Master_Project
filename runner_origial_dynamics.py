@@ -12,6 +12,14 @@ from Algorithms.expert_training import Expert
 from Algorithms.mfairl import MFAIRL
 from Algorithms.plirl import PLIRL
 
+
+
+def clear_log_file(file_path):
+    # Open the file in write mode to clear its contents
+    with open(file_path, 'w'):
+        pass  # Simply opening the file in write mode will clear its contents
+
+
 if __name__ == '__main__':
 
     # include all the arguments
@@ -38,6 +46,8 @@ if __name__ == '__main__':
     expert = Expert(env=env, horizon=arglist.horizon)
     expert.compute_ermfne()
 
+    clear_log_file('PIAIRL_training_log.txt')
+
 
     # performance comparison with varying number of samples
     results = pd.DataFrame(columns=['samples', 'method', 'return', 'Dev. MF', 'Dev. Policy'])
@@ -52,16 +62,16 @@ if __name__ == '__main__':
             trajectories = expert.generate_trajectories(num_of_game_plays, arglist.num_traj)
             # trajectoriesMDP = expert.generate_trajectories_MDP(num_of_game_plays, arglist.num_traj)
 
-            # mfirl = MFAIRL(data=trajectories, env=env, horizon=arglist.horizon, device=arglist.device)
+            mfirl = MFAIRL(data=trajectories, env=env, horizon=arglist.horizon, device=arglist.device)
             # mdpmfgirl = PLIRL(data=trajectoriesMDP, env=env, horizon=arglist.horizon, device=arglist.device)
 
             piairl = PIAIRL(data_expert = trajectories, env=env, horizon=arglist.horizon, device=arglist.device, num_of_game_plays=num_of_game_plays, num_traj= arglist.num_traj)
 
-            # mfirl.train(max_epoch=arglist.max_epoch,
-            #             learning_rate=arglist.lr,
-            #             max_grad_norm=arglist.max_grad_norm,
-            #             num_of_units=arglist.num_units_1)
-            #
+            mfirl.train(max_epoch=arglist.max_epoch,
+                        learning_rate=arglist.lr,
+                        max_grad_norm=arglist.max_grad_norm,
+                        num_of_units=arglist.num_units_1)
+
             # mdpmfgirl.train(max_epoch=arglist.max_epoch,
             #                 learning_rate=arglist.lr,
             #                 max_grad_norm=arglist.max_grad_norm,
@@ -74,27 +84,31 @@ if __name__ == '__main__':
 
             print('=training ends')
 
-            # mfirl_expected_return, mfirl_dev_mf, mfirl_dev_p = mfirl.divergence(expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow)
+            mfirl_expected_return, mfirl_dev_mf, mfirl_dev_p = mfirl.divergence(expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow)
             # mdp_expected_return, mdp_dev_mf, mdp_dev_p = mdpmfgirl.divergence(expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow)
             # results = results._append(pd.DataFrame([[num_of_game_plays, 'MFIRL', float(mfirl_expected_return), float(mfirl_dev_mf), float(mfirl_dev_p)],
             #                                        [num_of_game_plays, 'MDPMFG-IRL', float(mdp_expected_return), float(mdp_dev_mf), float(mdp_dev_p)],
             #                                        [num_of_game_plays, 'EXPERT', float(expert.expected_return), 0.0, 0.0]],
             #                                       columns=['samples', 'method', 'return', 'Dev. MF', 'Dev. Policy']))
-            #
-            # mfirl.save_model(model_save_path + 'mfirl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
+
+            mfirl.save_model(model_save_path + 'mfirl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
             # mdpmfgirl.save_model(model_save_path + 'mdp_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
 
             piairl_expected_return, piairl_dev_mf, piairl_dev_p = piairl.divergence(expert_mf_flow=expert.mf_flow,expert_p_flow=expert.p_flow)
             results = results._append(pd.DataFrame(
-                [[num_of_game_plays, 'MFIRL', float(piairl_expected_return), float(piairl_dev_mf), float(piairl_dev_p)],
+                [[num_of_game_plays, 'PIAIRL', float(piairl_expected_return), float(piairl_dev_mf), float(piairl_dev_p)],
+                 [num_of_game_plays, 'MFIRL', float(mfirl_expected_return), float(mfirl_dev_mf), float(mfirl_dev_p)],
                                                         [num_of_game_plays, 'EXPERT', float(expert.expected_return), 0.0, 0.0]],
                                                        columns=['samples', 'method', 'return', 'Dev. MF', 'Dev. Policy']))
 
-            piairl.save_model(model_save_path + 'mfirl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
+            piairl.save_model(model_save_path + 'piairl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
             num_of_game_plays += 1
+
+            print("we have done one round ")
 
     # save results
     results.to_csv(results_save_path + arglist.env_name + '.csv')
+
 
     # visualisation
     print('===============visualisation===============')
@@ -119,7 +133,7 @@ if __name__ == '__main__':
     #plt.figure(figsize=(5, 3))
     fig = plt.gcf()
     #fig.show(g)
-    fig.savefig(results_save_path + 'reward.pdf')
+    fig.savefig(results_save_path + 'reward.png')
 
     # figure for Dev. MF
     sns.set(style="darkgrid", font_scale=2.0)
@@ -140,7 +154,7 @@ if __name__ == '__main__':
     #plt.figure(figsize=(5, 3))
     fig = plt.gcf()
     #fig.show(g)
-    fig.savefig(results_save_path + 'mf.pdf')
+    fig.savefig(results_save_path + 'mf.png')
 
     # figure for Dev. Policy
     plt.clf()
@@ -158,4 +172,7 @@ if __name__ == '__main__':
     plt.xticks(x_ticks)
     plt.title(arglist.env_name)
     fig = plt.gcf()
-    fig.savefig(results_save_path + 'p.pdf')
+    fig.savefig(results_save_path + 'p.png')
+
+
+

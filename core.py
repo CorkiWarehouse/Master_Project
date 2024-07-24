@@ -188,7 +188,7 @@ class MeanFieldFlow(object):
             # t-rows and s-columns
             self.val = np.zeros((t, s))
             for _ in range(t):
-                self.val[_] = np.array([1/s for _ in range(s)]) # initial mean field is a uniform distribution
+                self.val[_] = np.random.dirichlet(np.ones(s)) # initial mean field is a uniform distribution
 
         # T is the time and it is the row number
         self.T = np.size(self.val, 0)
