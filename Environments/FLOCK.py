@@ -57,7 +57,7 @@ This expression means that if we wanted to know the
 
 import numpy as np
 
-from core import State, Reward, Environment, MeanField
+from core import State, Reward, Environment, MeanField, Action
 
 class Env(Environment):
     def __init__(self, is_original_dynamics: int, beta:float):
@@ -65,153 +65,160 @@ class Env(Environment):
         self.name = 'FLOCK'
 
         # Here is the ont-hot encoding
-        # we consider 5*5's points
-        self.state_shape = 25
+        # we consider 5*5's points with (x,y)
+        # so our state_shape should be 2
+        self.state_shape = 4
 
-        # for we only allow 4 types actions, We only have action_shape = 4
-        self.action_shape = 4
+        # This action is the accelerate value
+        # so the action_shape is also 1
+        self.action_shape = 1
+
+
+        # here means that we consider the grid be 5*5
+        # but we still have 4 choices for the velocity
+        # So we will have 25 points with 3 types of actions
+        # For our velocity's range will be about [-1,1], so we only give 3 choices for the acceleration
+        self.state_count = 9 * 9
+        self.action_count = 3*3
+
+        # then we need to give the actual action and state options
+        # for this state we need 25 grids, so that we give this
+        self.velocity_option = np.array([[x, y] for x in [-1, 0, 1] for y in [-1, 0, 1]]) # here is all velocity choices (Here is the action )
+        self.state_option = np.array(np.meshgrid(np.arange(-1, 2), np.arange(-1, 2), [-1, 1], [-1, 1])).T.reshape(-1, 4)
+        self.action_option = np.array([[x, y] for x in [-1, 0, 1] for y in [-1, 0, 1]])
+
+        # here is the delt_t and delt_x
+        # for we have 2 dims, we give one but control 2 of them
+        self.time_unit = 1
+        self.position_unit = 1
 
 
 
     def get_reward(self, state, action,mean_field):
 
-        # we use the decode_state method to get the position and velocity
-        position, velocity = self.decode_state(state)
+        # Our reward is made from 3 parts
+        # f value and L-2 norm for u (action) and v
 
-        # then we use the reward function in the article
-        current_reward =None
-        return None
+        # here is the f-value's components
+        # beta, N = state_count
+        N = self.state_count
+        beta = 0
+        v_x = 0
+        v_y = 0
 
-    '''
-    This method is to change One-Hot to the original grid
-    Like we have state_24 = all zero but index 23 is 1
-    
-    So we can have this to get our original 
-    '''
-    def decode_state(self, state, grid_size=(5,5), velocity_options=[(-1, -1), (-1, 1), (1, -1), (1, 1)]):
-        """
-        Decode the one-hot encoded state vector to the corresponding position and velocity.
+        # get the mean velocity
+        for current in range(N):
+            # here is the v_x and v_y for this state
+            v_x += self.state_option[current][2]
+            v_y += self.state_option[current][3]
+        v_x_mean = v_x / N
+        v_y_mean = v_y / N
 
-        :param state_vector: List, one-hot encoded state vector.
-        :param grid_size: Tuple, the size of the grid (m, n).
-        :param velocity_options: List of tuples, possible velocity vectors.
-        :return: Tuple, the decoded position (x, y) and velocity (vx, vy).
-        """
-        assert len(velocity_options) * grid_size[0] * grid_size[1] == len(
-            state), "State vector length does not match the grid and velocity options."
+        inner = (-v_x_mean + self.state_option[state.val[0]][2] - v_y_mean + self.state_option[state.val[0]][3]) * mean_field.val[state.val[0]]
+        f_value = -np.linalg.norm(inner, ord=1)**2
 
-        # Find the index of '1' in the state vector
-        state_index = state.index(1)
+        # here we get the action part
+        action_contribution = np.linalg.norm(self.action_option[action.val[0]], ord=2) **2
 
-        # The number of states per grid cell is the number of velocity options
-        states_per_position = len(velocity_options)
+        # here is the 2 direction's attribute
+        velocity_contribution = np.linalg.norm([self.state_option[state.val[0]][2],self.state_option[state.val[0]][3]]
+                                               , ord=2) **2
 
-        # Decode the position and velocity
-        position_index = state_index // states_per_position
-        velocity_index = state_index % states_per_position
+        reward = f_value - action_contribution + velocity_contribution
 
-        # Convert position index to 2D grid coordinates
-        x = position_index // grid_size[1] + 1  # +1 because positions are 1-indexed
-        y = position_index % grid_size[1] + 1  # +1 because positions are 1-indexed
+        return Reward(reward=reward)
 
-        # Get the velocity
-        vx, vy = velocity_options[velocity_index]
+    # here is the mean field changing
+    def advance(self, policy, mean_field) -> MeanField:
+        next_mean_field = MeanField(mean_field=None, s=self.state_count)
 
-        return (x, y), (vx, vy)
+        # here is all the next_state
+        for next_state in range(self.state_count):
+            sum_next = 0
+            # here is all the current state which can reach to next one
+            # but for our time_unit is 5
+            # not all the action that can reach this 'next_state'
+            for current_state in range(self.state_count):
 
+                sum_policy_transition = 0
 
-    '''
-    This is the function to get the f_pay_off
-    '''
-    def calculate_flocking_payoff(self, positions, velocities, i, beta=0):
-        """
-        Calculate the flocking reward for agent i.
+                # we directly check all the valid actions
+                for current_action in range(self.action_count):
+                    current_state_policy = policy.val[current_state,current_action]
 
-        :param positions: A 2D array of shape (N, d) containing the positions of all agents.
-        :param velocities: A 2D array of shape (N, d) containing the velocities of all agents.
-        :param i: The index of the agent for which to calculate the reward.
-        :param beta: The exponent beta in the flocking criterion.
-        :return: The flocking reward for agent i.
-        """
-        N, d = positions.shape
-        assert velocities.shape == (N, d), "Positions and velocities must have the same shape."
+                    # for we have the deterministic policy
+                    # our prob is 0 or 1
+                    prob_transition = self.trans_prob(State(state=current_state), Action(action=current_action),mean_field)[next_state]
 
-        velocity_diffs = velocities - velocities[i]
-        position_diffs = positions - positions[i]
+                    sum_policy_transition += prob_transition*current_state_policy
 
-        # Calculate the norm squared of the velocity differences
-        velocity_diffs_norm_sq = np.sum(velocity_diffs ** 2, axis=1)
-
-        # Calculate the weighted norm squared of the position differences
-        position_diffs_weighted_norm = (1 + np.sum(position_diffs ** 2, axis=1)) ** beta
-
-        # Sum up the flocking criteria for all agents
-        flocking_sum = np.sum(velocity_diffs_norm_sq / position_diffs_weighted_norm)
-
-        # Calculate the flocking reward
-        flocking_reward = -1 / N * flocking_sum
-
-        return flocking_reward
+                # then we need to multiply it with mean field
+                # print("sum_policy_transition", sum_policy_transition)
+                sum_next += sum_policy_transition * mean_field.val[current_state]
+                # print("sum_next", sum_next)
 
 
-# # Example usage:
-# grid_size = (5, 5)  # Assuming a 5x5 grid
-# velocity_options = [(-1, -1), (-1, 1), (1, -1), (1, 1)]  # Possible velocity vectors
-#
-# # Let's say you have a one-hot encoded state with '1' at index 24 (25th state)
-# state_n = [0] * 100
-# state_n[24] = 1
-#
-# # Decode the state to get position and velocity
-# position, velocity = decode_state(state_n, grid_size, velocity_options)
-# print("Position:", position)
-# print("Velocity:", velocity)
+            next_mean_field.val[next_state] = sum_next
+            # print(test_set)
 
-def calculate_flocking_reward(positions, velocities, i, beta):
-    """
-    Calculate the flocking reward for agent i.
+        # at last, we need to normalize the output
+        # Normalize the mean field values so they sum to 1
+        total = np.sum(next_mean_field.val)
+        if total > 0:  # Avoid division by zero
+            next_mean_field.val /= total
 
-    :param positions: A 2D array of shape (N, d) containing the positions of all agents.
-    :param velocities: A 2D array of shape (N, d) containing the velocities of all agents.
-    :param i: The index of the agent for which to calculate the reward.
-    :param beta: The exponent beta in the flocking criterion.
-    :return: The flocking reward for agent i.
-    """
-    N, d = positions.shape
-    assert velocities.shape == (N, d), "Positions and velocities must have the same shape."
-
-    velocity_diffs = velocities - velocities[i]
-    position_diffs = positions - positions[i]
-
-    # Calculate the norm squared of the velocity differences
-    velocity_diffs_norm_sq = np.sum(velocity_diffs ** 2, axis=1)
-
-    # Calculate the weighted norm squared of the position differences
-    position_diffs_weighted_norm = (1 + np.sum(position_diffs ** 2, axis=1)) ** beta
-
-    # Sum up the flocking criteria for all agents
-    flocking_sum = np.sum(velocity_diffs_norm_sq / position_diffs_weighted_norm)
-
-    # Calculate the flocking reward
-    flocking_reward = -1 / N * flocking_sum
-
-    return flocking_reward
+        return next_mean_field
 
 
-# Example usage:
-# Assuming you have the positions and velocities of N agents stored in numpy arrays
-N = 10  # Number of agents
-d = 2  # Dimension of space
+    # we do not consider the noise in our environment
+    def dynamics(self, state, action, mean_field= None) -> State:
 
-# For simplicity, let's create random positions and velocities
-np.random.seed(0)  # Seed for reproducibility
-positions = np.random.rand(N, d)
-velocities = np.random.rand(N, d)
+        # get the current position and action
+        current_x_v = self.state_option[state.val[0]]
+        current_action = self.action_option[action.val[0]]
 
-# Choose the agent index and beta value
-agent_index = 0  # Index for agent i
-beta_value = 1.5  # Exponent beta
+        # do the transition
+        next_x = current_x_v[0] + current_x_v[2] * self.time_unit
+        next_y = current_x_v[1] + current_x_v[3] * self.time_unit
+        next_vx = current_x_v[2] + current_action[0] * self.time_unit
+        next_vy = current_x_v[3] + current_action[1] * self.time_unit
 
-# Get the flocking reward for agent i
-reward = calculate_flocking_reward(positions, velocities, agent_index, beta_value)
-print(f"Flocking reward for agent {agent_index}: {reward}")
+        # find the corresponding state
+        next_state = [next_x,next_y,next_vx,next_vy]
+
+        # Convert next_state to a numpy array for broadcasting
+        next_state_np = np.array(next_state)
+
+        # Calculate the index of the next_state in the grid
+        index = np.where((self.state_option == next_state_np).all(axis=1))[0][0]
+
+        return State(state=index)
+
+    def trans_prob(self, state, action, mean_field) -> np.ndarray:
+        # this is the length value
+        next_prob = np.zeros(self.state_count)
+
+        # get the current position and action
+        current_x_v = self.state_option[state.val[0]]
+        current_action = self.action_option[action.val[0]]
+
+        # do the transition
+        next_x = current_x_v[0] + current_x_v[2] * self.time_unit
+        next_y = current_x_v[1] + current_x_v[3] * self.time_unit
+        next_vx = current_x_v[2] + current_action[0] * self.time_unit
+        next_vy = current_x_v[3] + current_action[1] * self.time_unit
+
+        # find the corresponding state
+        next_state = [next_x, next_y, next_vx, next_vy]
+
+        # Convert next_state to a numpy array for broadcasting
+        next_state_np = np.array(next_state)
+
+        # Calculate the index of the next_state in the grid
+        index = np.where((self.state_option == next_state_np).all(axis=1))[0][0]
+
+        next_prob[index] = 1
+
+        return next_prob
+
+

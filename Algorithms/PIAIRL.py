@@ -48,10 +48,10 @@ class PIAIRL():
         self.device = device
 
         self.horizon = horizon
-        self.mf_flow = MeanFieldFlow(s=self.env.state_shape,t=self.horizon)
+        self.mf_flow = MeanFieldFlow(s=self.env.state_count,t=self.horizon)
 
         # TODO we need the policy flow to get the loss function
-        self.p_flow = PolicyFlow(s=self.env.state_shape,t=self.horizon,a=self.env.action_shape)
+        self.p_flow = PolicyFlow(s=self.env.state_count,t=self.horizon,a=self.env.action_count)
         self.expected_return = 0.0
 
         #TODO we need the parameter to train
@@ -105,12 +105,12 @@ class PIAIRL():
     def train_reward_model(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
         reward_model = RewardModel(state_shape=self.env.state_shape,
                                    action_shape=self.env.action_shape,
-                                   mf_shape=self.env.state_shape,
+                                   mf_shape=self.env.state_count,
                                    num_of_units=num_of_units).to(self.device)
 
         policy_model = PolicyModel(state_shape=self.env.state_shape,
                                    action_shape=self.env.action_shape,
-                                   mf_shape=self.env.state_shape,
+                                   mf_shape=self.env.state_count,
                                    num_of_units=num_of_units).to(self.device)
 
         optimizer_reward = optim.Adam(reward_model.parameters(), lr=learning_rate)
@@ -122,19 +122,16 @@ class PIAIRL():
             so that we can get the trajectory from it 
                 we just randomly initialize the policy
         '''
-        init_policy_flow = np.random.rand(self.horizon, self.env.state_shape, self.env.action_shape)
+        init_policy_flow = np.random.rand(self.horizon, self.env.state_count, self.env.action_count)
 
         # 将最后一个维度的值归一化为 1
         init_policy_flow /= init_policy_flow.sum(axis=-1, keepdims=True)
 
         self.p_flow.val = init_policy_flow
 
-        # Precompute all possible one-hot encodings for states and actions
-        state_encodings = torch.eye(self.env.state_shape).to(self.device)
-        action_encodings = torch.eye(self.env.action_shape).to(self.device)
 
         # here we use the expert meanfield to generate the trajectory
-        init_est_expert_mf_flow = np.zeros((self.horizon, self.env.state_shape))
+        init_est_expert_mf_flow = np.zeros((self.horizon, self.env.state_count))
         for sample in self.data_expert:
             for t in range(self.horizon):
                 init_est_expert_mf_flow[t, int(sample.states[t])] += 1
@@ -157,7 +154,7 @@ class PIAIRL():
             # TODO This is the replace part for the
             # TODO and we store all the tensor value in it
             # after this we get the mean filed flow from current policy and trajectory
-            estimated_mean_field_flow = np.zeros((self.horizon, self.env.state_shape))
+            estimated_mean_field_flow = np.zeros((self.horizon, self.env.state_count))
 
             # For we do have the trained value before we train our meanfield
             # So we use the estimated value from the expert for the first round
@@ -168,8 +165,8 @@ class PIAIRL():
                         # here we only add the show states
                         # and all the value form the NN will be a tensor value
                         estimated_mean_field_flow[t, int(sample.states[t])] += self.mean_field_model(
-                            torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample.states[t]))).to(self.device, torch.float),
-                            torch.from_numpy(self.onehot_encoding(self.horizon, int(t))).to(self.device, torch.float)
+                            torch.tensor([self.env.state_option[int(sample.states[t])]]).to(self.device, torch.float),
+                            torch.tensor([t]).to(self.device, torch.float)
                         )
                 for t in range(self.horizon):
                     sum_values = estimated_mean_field_flow[t].sum()
@@ -199,18 +196,13 @@ class PIAIRL():
                 # At here we create the mean field flow for every time
                 for t in range(self.horizon):
                     reward_component = reward_model(
-                            torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample_expert.states[t]))).to(
-                                self.device, torch.float),
-                            torch.from_numpy(self.onehot_encoding(self.env.action_shape, int(sample_expert.actions[t]))).to(
-                                self.device, torch.float),
-                            torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float))
+                            torch.tensor([self.env.state_option[int(sample_expert.states[t])]]).to(self.device, torch.float),
+                            torch.tensor([self.env.action_option[int(sample_expert.actions[t])]]).to(self.device, torch.float),
+                            torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
+                    )
 
                     up = torch.exp(reward_component)
 
-                    # print(type(sample_expert.states[t]))
-                    # print(type(sample_expert.actions[t]))
-                    # # print(self.p_flow.val)
-                    # print(self.p_flow.val[t,sample_expert.states[t],sample_expert.actions[t]])
 
                     # here we add the policy for this state and action
                     down = torch.exp(reward_component +
@@ -237,11 +229,10 @@ class PIAIRL():
             for sample_policy_theta in self.data_policy_theta:
                 value_per_step = []
                 for t in range(self.horizon):
+                    # here we give addition [] for torch.cat in the nn
                     reward_component = reward_model(
-                        torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample_policy_theta.states[t]))).to(
-                            self.device, torch.float),
-                        torch.from_numpy(self.onehot_encoding(self.env.action_shape, int(sample_policy_theta.actions[t]))).to(
-                            self.device, torch.float),
+                        torch.tensor([self.env.state_option[int(sample_policy_theta.states[t])]]).to(self.device, torch.float),
+                        torch.tensor([self.env.action_option[int(sample_policy_theta.actions[t])]]).to(self.device, torch.float),
                         torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
                     )
 
@@ -264,7 +255,7 @@ class PIAIRL():
             # So we use it to minmize the - of the sum
 
             optimizer_reward.zero_grad()
-            loss = (estimated_expert_data + estimated_policy_data).abs()
+            loss = -(estimated_expert_data + estimated_policy_data)
             loss.backward()
             U.clip_grad_norm_(reward_model.parameters(), max_grad_norm)
             optimizer_reward.step()
@@ -284,12 +275,8 @@ class PIAIRL():
                         # So we can just use the "estimated_mean_field_flow" we got before
                         value_per_sampler.append(
                             reward_model(
-                                torch.from_numpy(
-                                    self.onehot_encoding(self.env.state_shape, int(sample.states[current]))).to(
-                                    self.device, torch.float),
-                                torch.from_numpy(self.onehot_encoding(self.env.action_shape,
-                                                                      int(sample.actions[current]))).to(
-                                    self.device, torch.float),
+                                torch.tensor([self.env.state_option[int(sample.states[current])]]).to(self.device, torch.float),
+                                torch.tensor([self.env.action_option[int(sample.actions[current])]]).to(self.device, torch.float),
                                 torch.from_numpy(estimated_mean_field_flow[current, :]).to(self.device, torch.float)
                             ) - torch.log(torch.tensor(self.p_flow.val[current, int(sample.states[current]), int(sample.actions[current])]))
                         )
@@ -302,17 +289,15 @@ class PIAIRL():
 
                 # train the policy model
                 optimizer_policy.zero_grad()
-                loss2 = (estimated_update).abs()
+                loss2 = -(estimated_update)
                 loss2.backward()
                 U.clip_grad_norm_(policy_model.parameters(), max_grad_norm)
                 optimizer_policy.step()
 
                 # then we need to update the policy
-                for s in range(self.env.state_shape):
+                for s in range(self.env.state_count):
                     new_policy = policy_model(
-                        torch.from_numpy(
-                            self.onehot_encoding(self.env.state_shape, int(s))).to(
-                            self.device, torch.float),
+                        torch.tensor([self.env.state_option[s]]).to(self.device, torch.float),
                         torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
                     )
 
@@ -353,7 +338,8 @@ class PIAIRL():
         # this is the nn for the mean field value
         mean_field_model = MeanFieldModel(state_shape=self.env.state_shape,
                                           # this is the special attribute for our model
-                                          time_horizon=self.horizon,
+                                          # here is the time shape should be the 1
+                                          time_horizon=1,
                                           num_of_units=num_of_units).to(self.device)
 
         # this is the optimizer which is the actual runner
@@ -382,18 +368,14 @@ class PIAIRL():
 
                     # position x_onehot and time t_onehot
                     # we use this 2 variable to track the gradient so that we can do the loss
-                    x_onehot = torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample.states[t]))).to(self.device, torch.float)
-                    t_onehot = torch.from_numpy(self.onehot_encoding(self.horizon, int(t))).to(self.device, torch.float)
+                    x_onehot = torch.tensor([self.env.state_option[int(sample.states[t])]]).to(self.device, torch.float)
+                    t_onehot = torch.tensor([t]).to(self.device, torch.float)
 
                     # last position
                     # and here we need to make sure that this is legal
-                    x_last_onehot = torch.from_numpy(
-                        self.onehot_encoding(self.env.state_shape, int(sample.states[t] - self.env.position_unit) % self.env.state_shape)
-                    ).to(self.device, torch.float)
+                    x_last_onehot = torch.tensor([self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]]).to(self.device, torch.float)
 
-                    t_next_onehot = torch.from_numpy(
-                        self.onehot_encoding(self.horizon, int(t + self.env.time_unit) % self.horizon )
-                    ).to(self.device, torch.float)
+                    t_next_onehot = torch.tensor([int(t + 1) % self.horizon]).to(self.device, torch.float)
 
                     # so that we can track its gradient
                     x_onehot.requires_grad = True
@@ -419,9 +401,9 @@ class PIAIRL():
                     '''
 
                     action_index_now = np.argmax(current_policy[int(sample.states[t])])
-                    action_index_last = np.argmax(current_policy[int((sample.states[t] - self.env.position_unit)%self.env.state_shape)])
-                    velocity_now = self.env.velocity_option[action_index_now]
-                    velocity_last_x =self.env.velocity_option[action_index_last]
+                    action_index_last = np.argmax(current_policy[int((sample.states[t] - 1)%self.env.state_count)])
+                    velocity_now = self.env.action_option[action_index_now]
+                    velocity_last_x =self.env.action_option[action_index_last]
 
 
                     # time do not need one-hot
@@ -458,7 +440,7 @@ class PIAIRL():
                     loss_total.append(loss)
 
                 # here is the optimal path
-                residual = torch.mean(torch.cat(loss_total,dim=0).reshape((1, -1)).abs())
+                residual =  torch.mean(torch.cat(loss_total,dim=0).reshape((1, -1))) # - ?
                 optimizer1.zero_grad()
                 residual.backward()
                 U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
@@ -479,8 +461,8 @@ class PIAIRL():
     '''
     def generate_trajectories_from_policy_flow(self, num_game_play: int, num_traj: int, current_policy_flow,
                                                current_mean_field_flow, deterministic=True):
-        states = [i for i in range(self.env.state_shape)]  # State space
-        actions = [i for i in range(self.env.action_shape)]  # Action space
+        states = [i for i in range(self.env.state_count)]  # State space
+        actions = [i for i in range(self.env.action_count)]  # Action space
         assert (current_mean_field_flow is not None) and (self.p_flow is not None)
 
         data = [Trajectory(states=None, actions=None, horizon=self.horizon) for _ in range(num_game_play * num_traj)]
@@ -518,12 +500,12 @@ class PIAIRL():
         assert self.reward_model is not None
         # Init the mf_flow and p_flow
         '''状态特征向量长度'''
-        mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_shape, t=self.horizon)
-        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+        mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
         # Here is the training process
         for _ in range(MAX):
-            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
             # Here q-value is the p_flow value
             '''
@@ -531,18 +513,18 @@ class PIAIRL():
             self.env.action_shape is int 
             self.env.state_shape is int
             '''
-            q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+            q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
             '''
             Initialization of Policy at Final Time Step (self.horizon-1)
                 Policy is initialized to a uniform distribution across all actions for each state. 
                 This reflects an assumption of equal likelihood of actions in the absence of future information.
             '''
-            for s in range(self.env.state_shape):
+            for s in range(self.env.state_count):
                 # let last time's policy_flow's action's probability be init = 1/(number_of_action)
                 '''Here is the current time for we start at 0'''
                 p_flow.val[self.horizon - 1, s, :] = (
-                    np.array([1 / self.env.action_shape for _ in range(self.env.action_shape)]))
+                    np.array([1 / self.env.action_count for _ in range(self.env.action_count)]))
 
             # compute Q values and policy flow
             '''
@@ -554,9 +536,9 @@ class PIAIRL():
             # self.horizon - 2
             for t in reversed(range(0, self.horizon - 1)):
                 # every state s
-                for s_current in range(0, self.env.state_shape):
+                for s_current in range(0, self.env.state_count):
                     # for every possible action
-                    for a_current in range(0, self.env.action_shape):
+                    for a_current in range(0, self.env.action_count):
                         '''
                         Onehot_encoding is used to fit input requirements of a typical neural network model
 
@@ -573,10 +555,8 @@ class PIAIRL():
                         In another word this is immediate Reward 
                         '''
                         q_values.val[t, s_current, a_current] += self.reward_model(
-                            torch.from_numpy(self.onehot_encoding(self.env.state_shape, s_current)).to(self.device,
-                                                                                                       torch.float),
-                            torch.from_numpy(self.onehot_encoding(self.env.action_shape, a_current)).to(self.device,
-                                                                                                        torch.float),
+                            torch.tensor([self.env.state_option[s_current]]).to(self.device,torch.float),
+                            torch.tensor([self.env.action_option[a_current]]).to(self.device, torch.float),
                             torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
                             ).detach().cpu().numpy()
                         # next step
@@ -585,7 +565,7 @@ class PIAIRL():
 
                         In a word, Future Reward
                         '''
-                        for s_next in range(0, self.env.state_shape):
+                        for s_next in range(0, self.env.state_count):
                             # Consider the current state and action
                             # we let our q-value at this time to the sum of all next
                             # Same as we first consider the s_next's future reward
@@ -600,7 +580,7 @@ class PIAIRL():
                             # and this "entr" is the entropy term
 
                             # then we consider all the action of the s_next
-                            for a_next in range(0, self.env.action_shape):
+                            for a_next in range(0, self.env.action_count):
                                 q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                              Action(action=a_current),
                                                                                              MeanField(
@@ -617,17 +597,17 @@ class PIAIRL():
 
                 policy is updated using a softmax function = q_values 
                 '''
-                for s in range(0, self.env.state_shape):
+                for s in range(0, self.env.state_count):
                     partition = 0.0
                     # let our value from 0-1
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         # have all the exp value beh
                         partition += np.exp(q_values.val[t, s, a] / self.env.beta)
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         p_flow.val[t, s, a] = np.exp(q_values.val[t, s, a] / self.env.beta) / partition
 
             # compute mean field flow induced by the policy flow
-            mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_shape, t=self.horizon)
+            mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
             mf_flow_next.val[0] = mf_flow.val[0, :]
             for t in range(1, self.horizon):
                 # this will give the next Mean Field
@@ -651,23 +631,23 @@ class PIAIRL():
 
     def recover_expected_return(self):
         assert self.mf_flow is not None and self.p_flow is not None
-        q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+        q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
         # we update it from reverse
         for t in reversed(range(0, self.horizon - 1)):
-            for s_current in range(0, self.env.state_shape):
-                for a_current in range(0, self.env.action_shape):
+            for s_current in range(0, self.env.state_count):
+                for a_current in range(0, self.env.action_count):
                     # unlike above, we directly get the reward
                     q_values.val[t, s_current, a_current] += self.env.get_reward(State(state=s_current),
                                                                                  Action(action=a_current),
                                                                                  MeanField(mean_field=self.mf_flow.val[t])).val[0]
                     # next step
-                    for s_next in range(self.env.state_shape):
+                    for s_next in range(self.env.state_count):
                         q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                      Action(action=a_current),
                                                                                      MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
                                                                  * self.env.beta * np.sum(entr(self.p_flow.val[t+1, s_next, :]))
 
-                        for a_next in range(0, self.env.action_shape):
+                        for a_next in range(0, self.env.action_count):
                             q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                          Action(action=a_current),
                                                                                          MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
@@ -678,11 +658,11 @@ class PIAIRL():
 
         # For we have update the q_values from back
         # So we can get the expected return from the initial state
-        for s in range(0, self.env.state_shape):
+        for s in range(0, self.env.state_count):
             partition = 0.0
-            for a in range(0, self.env.action_shape):
+            for a in range(0, self.env.action_count):
                 partition += np.exp(q_values.val[0, s, a] / self.env.beta)
-            for a in range(0, self.env.action_shape):
+            for a in range(0, self.env.action_count):
                 self.expected_return += self.mf_flow.val[0, s] * np.exp(q_values.val[0, s, a] / self.env.beta) * q_values.val[0, s, a] / partition
 
 
@@ -699,7 +679,7 @@ class PIAIRL():
                                 torch.from_numpy(expert_mf_flow.val)
                                 ).detach().cpu().numpy()
         kl_div = nn.KLDivLoss(reduction='none')
-        kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_shape).sum(1)
+        kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_count).sum(1)
         dev_policy = torch.mul(kl_policy, torch.from_numpy(expert_mf_flow.val.reshape(1, -1))).sum().detach().cpu().numpy()
         return [self.expected_return, dev_mean_field, dev_policy]
 

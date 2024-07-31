@@ -74,7 +74,7 @@ def parse_args():
     '''
 
     parser.add_argument("--num_runs", type=int, default=10, help="number of independent runs")
-    parser.add_argument("--num_traj", type=int, default=10, help="number of trajectories generated per game play")
+    parser.add_argument("--num_traj", type=int, default=5, help="number of trajectories generated per game play")
     parser.add_argument("--max_num_game_plays", type=int, default=10, help="maximal number of sampled game_plays")
 
     # checkpointing

@@ -28,27 +28,28 @@ class Env(Environment):
         super().__init__(is_original_dynamics, beta)
         self.name = 'CARS'
 
-        # one-hot encoding
-        # 1000 points
-        self.state_shape = 10
+        self.state_shape = 1
 
         # For we have 10 choices
-        self.action_shape = 10
+        self.action_shape = 1
 
         # this is one hyper-parameter
-        self.position_unit = 1/self.state_shape # here is the delt_x
+        self.position_unit = 1/8 # here is the delt_x
+        self.time_unit = self.position_unit  # delt_t time difference
         self.road_length = 1 # this is the length of the road
 
         self.velocity_max = 1 # max velocity
 
+        self.total_time = 8  # time horizon
+
         # TODO Could we still use this value ?
-        self.velocity_option = [round(0.1 * i, 2)  for i in range(1,self.action_shape+1)]  # here is all velocity choices
-        self.state_option = np.round(np.arange(0,1,1/self.state_shape),2).tolist()
-        self.current_velocity = [0 for i in range(self.state_shape)]
+        self.action_option = np.round(np.arange(0, 1, self.time_unit), 3).tolist()  # here is all velocity choices
+        self.state_option = np.round(np.arange(0,1,self.position_unit),3).tolist()
+        # self.current_velocity = [0 for i in range(self.state_shape)]
 
         # this value is replaced by the env.horizen
-        self.total_time = 10 # time horizon
-        self.time_unit = 1 # delt_t time difference
+        self.state_count = len(self.state_option)
+        self.action_count = len(self.action_option)
 
     '''
     Here is the reward function 
@@ -68,7 +69,7 @@ class Env(Environment):
 
         # For we have one-hot encoding
         # get the velocity from the action list
-        velocity = self.velocity_option[action.val[0]]
+        velocity = self.action_option[action.val[0]]
 
         # get x from the state
         x_position = state.val[0]
@@ -105,28 +106,20 @@ class Env(Environment):
     '''
     def advance(self, policy, mean_field) -> MeanField:
         # init
-        next_mean_field = MeanField(mean_field=None, s=self.state_shape)
+        next_mean_field = MeanField(mean_field=None, s=self.state_count)
 
         # here is all the next_state
-        for next_state in range(self.state_shape):
-            test_set = []
+        for next_state in range(self.state_count):
             sum_next = 0
             # here is all the current state which can reach to next one
             # but for our time_unit is 5
             # not all the action that can reach this 'next_state'
-            for current_state in range(self.state_shape):
+            for current_state in range(self.state_count):
 
-                # so that, at first, we need to select the valid action
-                # and for we let it be the current_position and next_position
-                # TODO do we need to check all the valid action, or we can just ignore it
-                valid_actions = self.get_all_valid_actions(current_state,next_state)
-                # print("current_state", current_state, "valid_actions", valid_actions)
-                # print(valid_actions)
-                test_set.extend(valid_actions)
                 sum_policy_transition = 0
 
                 # we directly check all the valid actions
-                for current_action in valid_actions:
+                for current_action in range(self.action_count):
                     current_state_policy = policy.val[current_state,current_action]
 
                     # for we have the deterministic policy
@@ -187,12 +180,14 @@ class Env(Environment):
         x_position = self.state_option[state.val[0]]
 
         # get the v
-        velocity = self.velocity_option[action.val[0]]
+        velocity = self.action_option[action.val[0]]
 
         # get the next time and position
         # if it out of range
         x_next_position = (x_position + self.time_unit * velocity) % self.road_length
-        x_next_index = self.state_option.index(round(x_next_position, 2))
+
+        # here we give this value's closest value
+        x_next_index =  self.state_option.index(min(self.state_option, key=lambda x: abs(x - x_next_position)))
 
         # then return the next state
         next_state = State(state = x_next_index)
@@ -208,20 +203,20 @@ class Env(Environment):
     # FIXME this should be the state
     def trans_prob(self, state, action, mean_field) -> np.ndarray:
         # this is the length value
-        next_prob = np.zeros(self.state_shape)
+        next_prob = np.zeros(self.state_count)
 
         # change the only choice to 1
         # But we need to consider that our car's next state is deterministic
         current_location = self.state_option[state.val[0]]
 
         # then get the action
-        current_action = self.velocity_option[action.val[0]]
+        current_action = self.action_option[action.val[0]]
 
 
         # then get the next state's position
         next_location = (current_location + self.time_unit * current_action) % self.road_length
 
-        next_state_index = self.state_option.index(round(next_location, 2))
+        next_state_index = self.state_option.index(min(self.state_option, key=lambda x: abs(x - next_location)))
 
         next_prob[next_state_index] = 1
 
@@ -233,15 +228,15 @@ class Env(Environment):
     Here current_position is the 
         we return the action which is the index 
     '''
-    def get_all_valid_actions(self,current_position,next_position):
-        valid_actions = []
-
-        # for we have the actions for all the valid choices
-        for action in range(self.action_shape):
-
-            if (round((self.time_unit * self.velocity_option[action] + self.state_option[current_position])
-                    % self.road_length,2) == self.state_option[next_position]):
-                valid_actions.append(action)
-
-        return valid_actions
+    # def get_all_valid_actions(self,current_position,next_position):
+    #     valid_actions = []
+    #
+    #     # for we have the actions for all the valid choices
+    #     for action in range(self.action_shape):
+    #
+    #         if (round((self.time_unit * self.velocity_option[action] + self.state_option[current_position])
+    #                 % self.road_length,2) == self.state_option[next_position]):
+    #             valid_actions.append(action)
+    #
+    #     return valid_actions
 

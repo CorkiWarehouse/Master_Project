@@ -313,11 +313,11 @@ from core import State, Action
 
 car = CARS.Env(0,0)
 
-print(car.velocity_option)
+print(car.action_option)
 print(car.state_option)
 
 state_0 = State(state=0)
 action_0 = Action(action=1)
 
-print(car.get_all_valid_actions(0,0))
-print(car.trans_prob(state_0,action_0,mean_field=None))
+# print(car.get_all_valid_actions(0,0))
+# print(car.trans_prob(state_0,action_0,mean_field=None))

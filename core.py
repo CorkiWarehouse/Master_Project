@@ -301,6 +301,9 @@ class Environment(object):
         # TODO We add the time variable
         # TODO this is the variable which is used to fit to our CAR model
         self.total_time = None
+
+        self.state_count = None
+        self.action_count = None
         pass
 
     def get_observation(self):
@@ -405,12 +408,12 @@ class IRL(object):
         assert self.reward_model is not None
         # Init the mf_flow and p_flow
         '''状态特征向量长度'''
-        mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_shape, t=self.horizon)
-        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+        mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
         # Here is the training process
         for _ in range(MAX):
-            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
             # Here q-value is the p_flow value
             '''
@@ -418,7 +421,7 @@ class IRL(object):
             self.env.action_shape is int 
             self.env.state_shape is int
             '''
-            q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+            q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_count)
 
             '''
             Initialization of Policy at Final Time Step (self.horizon-1)
@@ -429,7 +432,7 @@ class IRL(object):
                 # let last time's policy_flow's action's probability be init = 1/(number_of_action)
                 '''Here is the current time for we start at 0'''
                 p_flow.val[self.horizon - 1, s, :] = (
-                    np.array([1 / self.env.action_shape for _ in range(self.env.action_shape)]))
+                    np.array([1 / self.env.action_count for _ in range(self.env.action_count)]))
 
             # compute Q values and policy flow
             '''
@@ -443,7 +446,7 @@ class IRL(object):
                 # every state s
                 for s_current in range(0, self.env.state_shape):
                     # for every possible action
-                    for a_current in range(0, self.env.action_shape):
+                    for a_current in range(0, self.env.action_count):
                         '''
                         Onehot_encoding is used to fit input requirements of a typical neural network model
                         
@@ -459,8 +462,8 @@ class IRL(object):
                         
                         In another word this is immediate Reward 
                         '''
-                        q_values.val[t, s_current, a_current] += self.reward_model(torch.from_numpy(self.onehot_encoding(self.env.state_shape, s_current)).to(self.device, torch.float),
-                                                                                   torch.from_numpy(self.onehot_encoding(self.env.action_shape, a_current)).to(self.device, torch.float),
+                        q_values.val[t, s_current, a_current] += self.reward_model(torch.tensor([s_current]).to(self.device, torch.float),
+                                                                                   torch.tensor([a_current]).to(self.device, torch.float),
                                                                                    torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
                                                                                    ).detach().cpu().numpy()
                         # next step
@@ -481,7 +484,7 @@ class IRL(object):
                                                                     # and this "entr" is the entropy term
 
                             # then we consider all the action of the s_next
-                            for a_next in range(0, self.env.action_shape):
+                            for a_next in range(0, self.env.action_count):
                                 q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                              Action(action=a_current),
                                                                                              MeanField(mean_field=mf_flow.val[t]))[s_next] \
@@ -499,14 +502,14 @@ class IRL(object):
                 for s in range(0, self.env.state_shape):
                     partition = 0.0
                     # let our value from 0-1
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         # have all the exp value beh
                         partition += np.exp(q_values.val[t, s, a] / self.env.beta)
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         p_flow.val[t, s, a] = np.exp(q_values.val[t, s, a] / self.env.beta) / partition
 
             # compute mean field flow induced by the policy flow
-            mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_shape, t=self.horizon)
+            mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
             mf_flow_next.val[0] = mf_flow.val[0, :]
             for t in range(1, self.horizon):
                 # this will give the next Mean Field
@@ -534,23 +537,23 @@ class IRL(object):
     '''
     def recover_expected_return(self):
         assert self.mf_flow is not None and self.p_flow is not None
-        q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+        q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
         # we update it from reverse
         for t in reversed(range(0, self.horizon - 1)):
-            for s_current in range(0, self.env.state_shape):
-                for a_current in range(0, self.env.action_shape):
+            for s_current in range(0, self.env.state_count):
+                for a_current in range(0, self.env.action_count):
                     # unlike above, we directly get the reward
                     q_values.val[t, s_current, a_current] += self.env.get_reward(State(state=s_current),
                                                                                  Action(action=a_current),
                                                                                  MeanField(mean_field=self.mf_flow.val[t])).val[0]
                     # next step
-                    for s_next in range(self.env.state_shape):
+                    for s_next in range(self.env.state_count):
                         q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                      Action(action=a_current),
                                                                                      MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
                                                                  * self.env.beta * np.sum(entr(self.p_flow.val[t+1, s_next, :]))
 
-                        for a_next in range(0, self.env.action_shape):
+                        for a_next in range(0, self.env.action_count):
                             q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                          Action(action=a_current),
                                                                                          MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
@@ -561,11 +564,11 @@ class IRL(object):
 
         # For we have update the q_values from back
         # So we can get the expected return from the initial state
-        for s in range(0, self.env.state_shape):
+        for s in range(0, self.env.state_count):
             partition = 0.0
-            for a in range(0, self.env.action_shape):
+            for a in range(0, self.env.action_count):
                 partition += np.exp(q_values.val[0, s, a] / self.env.beta)
-            for a in range(0, self.env.action_shape):
+            for a in range(0, self.env.action_count):
                 self.expected_return += self.mf_flow.val[0, s] * np.exp(q_values.val[0, s, a] / self.env.beta) * q_values.val[0, s, a] / partition
 
 
@@ -582,6 +585,6 @@ class IRL(object):
                                 torch.from_numpy(expert_mf_flow.val)
                                 ).detach().cpu().numpy()
         kl_div = nn.KLDivLoss(reduction='none')
-        kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_shape).sum(1)
+        kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_count).sum(1)
         dev_policy = torch.mul(kl_policy, torch.from_numpy(expert_mf_flow.val.reshape(1, -1))).sum().detach().cpu().numpy()
         return [self.expected_return, dev_mean_field, dev_policy]

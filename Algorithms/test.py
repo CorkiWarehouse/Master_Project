@@ -1,56 +1,28 @@
 import numpy as np
 
-class DynamicControlRL:
-    def __init__(self, u_min, u_max, time_interval):
-        self.u_min = u_min
-        self.u_max = u_max
-        self.delta_t = time_interval
-        self.state = self.initialize_state()
+# 定义 velocity_option 和 state_option
+velocity_option = np.round(np.arange(1 / 8, 1 + 1 / 8, 1 / 8), 3)
+state_option = np.round(np.arange(0, 1, 1 / 8), 3)
 
-    def initialize_state(self):
-        # Initializes the state (x, t)
-        # For simplicity, assuming x is a 2D position
-        position = np.random.rand(2)  # Random initial position
-        time = 0  # Start time
-        return {'position': position, 'time': time}
+print(len(velocity_option))
+print(len(state_option))
 
-    def get_action(self, state):
-        # Placeholder for action determination by policy network (u-Net)
-        # Random control within given bounds
-        return np.random.uniform(self.u_min, self.u_max, size=2)
+# 创建一个字典来存储结果
+result_mapping = {}
 
-    def dynamics(self, state, action):
-        # Computes the next state given current state and action
-        next_position = state['position'] + action * self.delta_t
-        next_time = state['time'] + self.delta_t
-        return {'position': next_position, 'time': next_time}
+# 遍历所有 velocity 和 state 的组合
+for state in state_option:
+    for velocity in velocity_option:
+        # 计算 velocity 和 state 的和
+        combined_value = np.round(velocity*1/8 + state, 3)
 
-    def get_reward(self, state, action):
-        # Reward function based on congestion cost
-        # Simplified example: negative of the squared sum of position coordinates (as a proxy for congestion)
-        congestion_cost = -np.sum(state['position']**2)
-        return congestion_cost
+        # 找到 state_option 中最接近的值
+        closest_value = min(state_option, key=lambda x: abs(x - combined_value))
 
-    def value_function(self, state):
-        # Placeholder for the value function estimated by a critic network
-        # Simplified example: negative distance from origin
-        return -np.linalg.norm(state['position'])
+        # 将结果存储到字典中
+        if combined_value not in result_mapping:
+            result_mapping[combined_value] = closest_value
 
-    def transition(self, state):
-        # Select action based on current policy
-        action = self.get_action(state)
-        next_state = self.dynamics(state, action)
-        reward = self.get_reward(state, action)
-        return next_state, reward
-
-    def simulate_step(self):
-        # Simulates a step in the environment
-        next_state, reward = self.transition(self.state)
-        self.state = next_state  # Update the environment to the new state
-        return next_state, reward
-
-# Example usage
-env = DynamicControlRL(u_min=-1, u_max=1, time_interval=0.1)
-for _ in range(10):
-    state, reward = env.simulate_step()
-    print(f"New State: {state}, Reward: {reward}")
+# 打印结果
+for combined_value, closest_value in result_mapping.items():
+    print(f"Combined Value: {combined_value} -> Closest State Option: {closest_value}")

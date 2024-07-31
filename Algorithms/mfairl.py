@@ -3,7 +3,8 @@ import torch
 import torch.optim as optim
 import torch.nn.utils as U
 
-from Algorithms.models import RewardModel, ShapingModel
+from Algorithms.myModels import RewardModel
+from Algorithms.models import ShapingModel
 from core import IRL
 
 MAX = 1000000  # maximum number of iterations
@@ -24,10 +25,10 @@ class MFAIRL(IRL):
     def train(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
         reward_model = RewardModel(state_shape=self.env.state_shape,
                                    action_shape=self.env.action_shape,
-                                   mf_shape=self.env.state_shape,
+                                   mf_shape=self.env.state_count,
                                    num_of_units=num_of_units).to(self.device)
         shaping_model = ShapingModel(state_shape=self.env.state_shape,
-                                     mf_shape=self.env.state_shape,
+                                     mf_shape=self.env.state_count,
                                      num_of_units=num_of_units).to(self.device)
         optimizer1 = optim.Adam(reward_model.parameters(), lr=learning_rate)
         optimizer2 = optim.Adam(shaping_model.parameters(), lr=learning_rate)
@@ -37,7 +38,7 @@ class MFAIRL(IRL):
         What is this ?
         '''
         # estimate mean field flow
-        est_expert_mf_flow = np.zeros((self.horizon, self.env.state_shape))
+        est_expert_mf_flow = np.zeros((self.horizon, self.env.state_count))
         '''
         Sample is the a trajectory from t = 0 to the self.horizon
             And sample must include the action and the states 
@@ -64,8 +65,8 @@ class MFAIRL(IRL):
 
 
 
-                reward_per_step = [reward_model(torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample.states[t]))).to(self.device, torch.float),
-                                                torch.from_numpy(self.onehot_encoding(self.env.action_shape, int(sample.actions[t]))).to(self.device, torch.float),
+                reward_per_step = [reward_model(torch.tensor([sample.states[t]]).to(self.device, torch.float),
+                                                torch.tensor([sample.actions[t]]).to(self.device, torch.float),
                                                 torch.from_numpy(est_expert_mf_flow[t, :]).to(self.device, torch.float)) for t in range(self.horizon)
                                    ]
 
@@ -80,13 +81,13 @@ class MFAIRL(IRL):
                 
                 Why we need lastest - init
                 '''
-                reward_shaping_per_sample = reward_per_sample\
-                                            + shaping_model(torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample.states[self.horizon-1]))).to(self.device, torch.float),
-                                                          torch.from_numpy(est_expert_mf_flow[self.horizon-1, :]).to(self.device, torch.float)
-                                                          )\
-                                            - shaping_model(torch.from_numpy(self.onehot_encoding(self.env.state_shape, int(sample.states[0]))).to(self.device, torch.float),
-                                                          torch.from_numpy(est_expert_mf_flow[0, :]).to(self.device, torch.float)
-                                                          )
+                reward_shaping_per_sample = reward_per_sample
+                                            # + shaping_model(torch.from_numpy(self.onehot_encoding(self.env.state_count, int(sample.states[self.horizon-1]))).to(self.device, torch.float),
+                                            #               torch.from_numpy(est_expert_mf_flow[self.horizon-1, :]).to(self.device, torch.float)
+                                            #               )\
+                                            # - shaping_model(torch.from_numpy(self.onehot_encoding(self.env.state_count, int(sample.states[0]))).to(self.device, torch.float),
+                                            #               torch.from_numpy(est_expert_mf_flow[0, :]).to(self.device, torch.float)
+                                            #               )
                 rewards.append(reward_shaping_per_sample)
 
             '''
@@ -94,22 +95,24 @@ class MFAIRL(IRL):
             '''
 
             # calculate expected shaping rewards of demonstrations
-            expected_shaping_reward = torch.sum(torch.cat(rewards, dim=0).reshape((1, -1))) / len(self.data)
+            expected_shaping_reward = sum(rewards) / len(self.data)
 
             # estimate partition function
 
             # TODO Remainder
-            logZ = torch.log(torch.sum(torch.exp(torch.cat(rewards, dim=0).reshape((1, -1))))).to(self.device, torch.float)
+            # logZ = torch.log(torch.sum(torch.exp(torch.cat(rewards, dim=0).reshape((1, -1))))).to(self.device, torch.float)
+            exp_rewards = sum(torch.exp(r) for r in rewards)
+            logZ = torch.log(exp_rewards).to(self.device, torch.float)
 
             # gradient descent
             optimizer1.zero_grad()
-            optimizer2.zero_grad()
+            # optimizer2.zero_grad()
             loss = - expected_shaping_reward + logZ
             loss.backward()
             U.clip_grad_norm_(reward_model.parameters(), max_grad_norm)
-            U.clip_grad_norm_(shaping_model.parameters(), max_grad_norm)
+            # U.clip_grad_norm_(shaping_model.parameters(), max_grad_norm)
             optimizer1.step()
-            optimizer2.step()
+            # optimizer2.step()
 
             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
 

@@ -43,27 +43,27 @@ class Expert(object):
     '''
 
     def compute_ermfne(self):
-        mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_shape, t=self.horizon)
-        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
+        mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
         for _ in range(MAX):
-            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
-            q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_shape)
-            for s in range(self.env.state_shape):
+            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+            q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+            for s in range(self.env.state_count):
                 p_flow.val[self.horizon - 1, s, :] = np.array(
-                    [1 / self.env.action_shape for _ in range(self.env.action_shape)])
+                    [1 / self.env.action_count for _ in range(self.env.action_count)])
 
             # print(p_flow.val)
 
             # compute Q values and policy flow
             for t in reversed(range(0, self.horizon - 1)):
-                for s_current in range(0, self.env.state_shape):
-                    for a_current in range(0, self.env.action_shape):
+                for s_current in range(0, self.env.state_count):
+                    for a_current in range(0, self.env.action_count):
                         q_values.val[t, s_current, a_current] += self.env.get_reward(State(state=s_current),
                                                                                      Action(action=a_current),
                                                                                      MeanField(mean_field=mf_flow.val[
                                                                                          t])).val[0]
                         # next step
-                        for s_next in range(self.env.state_shape):
+                        for s_next in range(self.env.state_count):
                             q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                          Action(action=a_current),
                                                                                          MeanField(
@@ -72,7 +72,7 @@ class Expert(object):
                                                                      * self.env.beta * np.sum(
                                 entr(p_flow.val[t + 1, s_next, :]))
 
-                            for a_next in range(0, self.env.action_shape):
+                            for a_next in range(0, self.env.action_count):
                                 q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                              Action(action=a_current),
                                                                                              MeanField(
@@ -86,15 +86,15 @@ class Expert(object):
                 # print(q_values.val)
 
                 # compute policy induced by the mean filed
-                for s in range(0, self.env.state_shape):
+                for s in range(0, self.env.state_count):
                     partition = 0.0
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         partition += np.exp(q_values.val[t, s, a] / self.env.beta)
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         p_flow.val[t, s, a] = np.exp(q_values.val[t, s, a] / self.env.beta) / partition
 
             # compute mean field flow induced by the policy flow
-            mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_shape, t=self.horizon)
+            mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
             mf_flow_next.val[0] = mf_flow.val[0, :]
             for t in range(1, self.horizon):
                 mf = self.env.advance(Policy(policy=p_flow.val[t - 1]), MeanField(mean_field=mf_flow.val[t - 1]))
@@ -106,11 +106,11 @@ class Expert(object):
             distance = torch.nn.MSELoss(reduction='sum', size_average=True)
             if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
                 # compute expected return under equilibrium and terminate iteration
-                for s in range(0, self.env.state_shape):
+                for s in range(0, self.env.state_count):
                     partition = 0.0
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         partition += np.exp(q_values.val[0, s, a] / self.env.beta)
-                    for a in range(0, self.env.action_shape):
+                    for a in range(0, self.env.action_count):
                         self.expected_return += mf_flow.val[0, s] * np.exp(q_values.val[0, s, a] / self.env.beta) * \
                                                 q_values.val[0, s, a] / partition
                 break
@@ -122,8 +122,8 @@ class Expert(object):
         self.p_flow = p_flow
 
     def generate_trajectories(self, num_game_play: int, num_traj: int):
-        states = [i for i in range(self.env.state_shape)]
-        actions = [i for i in range(self.env.action_shape)]
+        states = [i for i in range(self.env.state_count)]
+        actions = [i for i in range(self.env.action_count)]
         assert (self.mf_flow is not None) and (self.p_flow is not None)
         data = [Trajectory(states=None, actions=None, horizon=self.horizon) for _ in range(num_game_play * num_traj)]
         for i in range(num_game_play * num_traj):
@@ -144,36 +144,36 @@ class Expert(object):
                 data[i].actions[t] = a
         return data
 
-    def generate_trajectories_MDP(self, num_game_play: int, num_traj: int):
-        # invoke generate_trajectories for N times
-        assert (self.mf_flow is not None) and (self.p_flow is not None)
-        dataMDP = [TrajectoryMDP(p_flow=None,
-                                 mf_flow=None,
-                                 horizon=self.horizon,
-                                 state_shape=self.env.state_shape,
-                                 action_shape=self.env.action_shape) for _ in range(num_game_play)]
-        for n in range(num_game_play):
-            data = self.generate_trajectories(1, num_traj)
-            for t in range(self.horizon):
-                for sample in data:
-                    '''
-                    Why we have +1 in this case?
-                    '''
-                    dataMDP[n].mf_flow[t, int(sample.states[t])] += 1
-                    dataMDP[n].p_flow[t, int(sample.states[t]), int(sample.actions[t])] += 1
-
-        for sampleMDP in dataMDP:
-            for t in range(self.horizon):
-                sampleMDP.mf_flow[t] /= num_traj
-                normalise_factor = np.zeros(self.env.state_shape)
-                for s in range(self.env.state_shape):
-                    normalise_factor[s] = np.sum(sampleMDP.p_flow[t, s, :])
-                #print(normalise_factor)
-                for s in range(self.env.state_shape):
-                    if int(normalise_factor[s]) != 0:
-                        sampleMDP.p_flow[t, s] /= normalise_factor[s]
-
-        return dataMDP
+    # def generate_trajectories_MDP(self, num_game_play: int, num_traj: int):
+    #     # invoke generate_trajectories for N times
+    #     assert (self.mf_flow is not None) and (self.p_flow is not None)
+    #     dataMDP = [TrajectoryMDP(p_flow=None,
+    #                              mf_flow=None,
+    #                              horizon=self.horizon,
+    #                              state_shape=self.env.state_shape,
+    #                              action_shape=self.env.action_shape) for _ in range(num_game_play)]
+    #     for n in range(num_game_play):
+    #         data = self.generate_trajectories(1, num_traj)
+    #         for t in range(self.horizon):
+    #             for sample in data:
+    #                 '''
+    #                 Why we have +1 in this case?
+    #                 '''
+    #                 dataMDP[n].mf_flow[t, int(sample.states[t])] += 1
+    #                 dataMDP[n].p_flow[t, int(sample.states[t]), int(sample.actions[t])] += 1
+    #
+    #     for sampleMDP in dataMDP:
+    #         for t in range(self.horizon):
+    #             sampleMDP.mf_flow[t] /= num_traj
+    #             normalise_factor = np.zeros(self.env.state_shape)
+    #             for s in range(self.env.state_shape):
+    #                 normalise_factor[s] = np.sum(sampleMDP.p_flow[t, s, :])
+    #             #print(normalise_factor)
+    #             for s in range(self.env.state_shape):
+    #                 if int(normalise_factor[s]) != 0:
+    #                     sampleMDP.p_flow[t, s] /= normalise_factor[s]
+    #
+    #     return dataMDP
 
     def load_opt_mfe(self, path: str):
         """
@@ -182,7 +182,7 @@ class Expert(object):
         :return: mean field and policy of the socially optimal MFNE
         """
         mean_field = np.loadtxt(path + 'mf.txt', delimiter=',')
-        policy = np.fromfile(path + 'policy.bin', dtype=np.float)
+        policy = np.fromfile(path + 'policy.bin', dtype=np.float32)
         self.mf_flow = MeanFieldFlow(mean_field_flow=mean_field[0:self.horizon, ])
         self.p_flow = PolicyFlow(
-            policy_flow=np.reshape(policy, (100, self.env.state_shape, self.env.action_shape))[0:self.horizon, :])
+            policy_flow=np.reshape(policy, (100, self.env.state_count, self.env.action_count))[0:self.horizon, :])
