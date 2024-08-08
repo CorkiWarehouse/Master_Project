@@ -71,7 +71,7 @@ class Env(Environment):
 
         # This action is the accelerate value
         # so the action_shape is also 1
-        self.action_shape = 1
+        self.action_shape = 2
 
 
         # here means that we consider the grid be 5*5
@@ -84,13 +84,15 @@ class Env(Environment):
         # then we need to give the actual action and state options
         # for this state we need 25 grids, so that we give this
         self.velocity_option = np.array([[x, y] for x in [-1, 0, 1] for y in [-1, 0, 1]]) # here is all velocity choices (Here is the action )
-        self.state_option = np.array(np.meshgrid(np.arange(-1, 2), np.arange(-1, 2), [-1, 1], [-1, 1])).T.reshape(-1, 4)
+        self.state_option = np.array(np.meshgrid(np.arange(-1, 2), np.arange(-1, 2), np.arange(-1, 2), np.arange(-1, 2))).T.reshape(-1, 4)
         self.action_option = np.array([[x, y] for x in [-1, 0, 1] for y in [-1, 0, 1]])
 
         # here is the delt_t and delt_x
         # for we have 2 dims, we give one but control 2 of them
         self.time_unit = 1
         self.position_unit = 1
+
+
 
 
 
@@ -114,7 +116,7 @@ class Env(Environment):
         v_x_mean = v_x / N
         v_y_mean = v_y / N
 
-        inner = (-v_x_mean + self.state_option[state.val[0]][2] - v_y_mean + self.state_option[state.val[0]][3]) * mean_field.val[state.val[0]]
+        inner = np.array([-v_x_mean + self.state_option[state.val[0]][2], -v_y_mean + self.state_option[state.val[0]][3]]) * mean_field.val[state.val[0]]
         f_value = -np.linalg.norm(inner, ord=1)**2
 
         # here we get the action part
@@ -186,11 +188,16 @@ class Env(Environment):
         # find the corresponding state
         next_state = [next_x,next_y,next_vx,next_vy]
 
+        # then we need to make sure that
+        # our value do not be out of the bound
+        next_state = self.modulate_value(next_state)
+
         # Convert next_state to a numpy array for broadcasting
         next_state_np = np.array(next_state)
 
         # Calculate the index of the next_state in the grid
-        index = np.where((self.state_option == next_state_np).all(axis=1))[0][0]
+        # must give the int
+        index = int(np.where((self.state_option == next_state_np).all(axis=1))[0][0])
 
         return State(state=index)
 
@@ -203,13 +210,15 @@ class Env(Environment):
         current_action = self.action_option[action.val[0]]
 
         # do the transition
-        next_x = current_x_v[0] + current_x_v[2] * self.time_unit
+        next_x = (current_x_v[0] + current_x_v[2] * self.time_unit)
         next_y = current_x_v[1] + current_x_v[3] * self.time_unit
         next_vx = current_x_v[2] + current_action[0] * self.time_unit
         next_vy = current_x_v[3] + current_action[1] * self.time_unit
 
         # find the corresponding state
         next_state = [next_x, next_y, next_vx, next_vy]
+
+        next_state = self.modulate_value(next_state)
 
         # Convert next_state to a numpy array for broadcasting
         next_state_np = np.array(next_state)
@@ -220,5 +229,18 @@ class Env(Environment):
         next_prob[index] = 1
 
         return next_prob
+
+
+    # this used to make the value do not go outof the bound
+    def modulate_value(self, value):
+        new_result = [0 for i in range(len(value))]
+        for i in range(len(value)):
+            if value[i] > 1:
+                new_result[i] = -1
+            elif value[i] < -1:
+                new_result[i] = 1
+
+        return new_result
+
 
 

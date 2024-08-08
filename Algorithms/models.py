@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.functional as F
 
+from Algorithms.myModels import prepare_tensors
+
 '''
 3 NN model 
 '''
@@ -94,6 +96,8 @@ class ShapingModel(nn.Module):
         """
         input_g: input_global, input features of all agents
         """
+        state_input, action_input, mf_input, time_input = prepare_tensors(state=state_input, mf=mf_input)
+
         x_cat = self.LReLU(self.linear_c1(torch.cat([state_input, mf_input], dim=0)))
         x = self.LReLU(self.linear_c2(x_cat))
         value = self.linear_c(x)

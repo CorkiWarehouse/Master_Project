@@ -304,6 +304,9 @@ class Environment(object):
 
         self.state_count = None
         self.action_count = None
+
+        self.state_option = None
+        self.action_option = None
         pass
 
     def get_observation(self):
@@ -421,14 +424,14 @@ class IRL(object):
             self.env.action_shape is int 
             self.env.state_shape is int
             '''
-            q_values = PolicyFlow(policy_flow=None, s=self.env.state_shape, t=self.horizon, a=self.env.action_count)
+            q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
             '''
             Initialization of Policy at Final Time Step (self.horizon-1)
                 Policy is initialized to a uniform distribution across all actions for each state. 
                 This reflects an assumption of equal likelihood of actions in the absence of future information.
             '''
-            for s in range(self.env.state_shape):
+            for s in range(self.env.state_count):
                 # let last time's policy_flow's action's probability be init = 1/(number_of_action)
                 '''Here is the current time for we start at 0'''
                 p_flow.val[self.horizon - 1, s, :] = (
@@ -444,7 +447,7 @@ class IRL(object):
             # self.horizon - 2
             for t in reversed(range(0, self.horizon - 1)):
                 # every state s
-                for s_current in range(0, self.env.state_shape):
+                for s_current in range(0, self.env.state_count):
                     # for every possible action
                     for a_current in range(0, self.env.action_count):
                         '''
@@ -462,8 +465,8 @@ class IRL(object):
                         
                         In another word this is immediate Reward 
                         '''
-                        q_values.val[t, s_current, a_current] += self.reward_model(torch.tensor([s_current]).to(self.device, torch.float),
-                                                                                   torch.tensor([a_current]).to(self.device, torch.float),
+                        q_values.val[t, s_current, a_current] += self.reward_model(torch.tensor(self.env.state_option[s_current]).to(self.device, torch.float),
+                                                                                   torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
                                                                                    torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
                                                                                    ).detach().cpu().numpy()
                         # next step
@@ -472,7 +475,7 @@ class IRL(object):
                         
                         In a word, Future Reward
                         '''
-                        for s_next in range(0, self.env.state_shape):
+                        for s_next in range(0, self.env.state_count):
                             # Consider the current state and action
                             # we let our q-value at this time to the sum of all next
                             # Same as we first consider the s_next's future reward
@@ -499,7 +502,7 @@ class IRL(object):
                 
                 policy is updated using a softmax function = q_values 
                 '''
-                for s in range(0, self.env.state_shape):
+                for s in range(0, self.env.state_count):
                     partition = 0.0
                     # let our value from 0-1
                     for a in range(0, self.env.action_count):

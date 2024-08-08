@@ -109,7 +109,7 @@ class PIAIRL():
                                    num_of_units=num_of_units).to(self.device)
 
         policy_model = PolicyModel(state_shape=self.env.state_shape,
-                                   action_shape=self.env.action_shape,
+                                   action_shape=self.env.action_count,
                                    mf_shape=self.env.state_count,
                                    num_of_units=num_of_units).to(self.device)
 
@@ -165,8 +165,8 @@ class PIAIRL():
                         # here we only add the show states
                         # and all the value form the NN will be a tensor value
                         estimated_mean_field_flow[t, int(sample.states[t])] += self.mean_field_model(
-                            torch.tensor([self.env.state_option[int(sample.states[t])]]).to(self.device, torch.float),
-                            torch.tensor([t]).to(self.device, torch.float)
+                            torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float),
+                            torch.tensor(t).to(self.device, torch.float)
                         )
                 for t in range(self.horizon):
                     sum_values = estimated_mean_field_flow[t].sum()
@@ -196,8 +196,8 @@ class PIAIRL():
                 # At here we create the mean field flow for every time
                 for t in range(self.horizon):
                     reward_component = reward_model(
-                            torch.tensor([self.env.state_option[int(sample_expert.states[t])]]).to(self.device, torch.float),
-                            torch.tensor([self.env.action_option[int(sample_expert.actions[t])]]).to(self.device, torch.float),
+                            torch.tensor(self.env.state_option[int(sample_expert.states[t])]).to(self.device, torch.float),
+                            torch.tensor(self.env.action_option[int(sample_expert.actions[t])]).to(self.device, torch.float),
                             torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
                     )
 
@@ -231,8 +231,8 @@ class PIAIRL():
                 for t in range(self.horizon):
                     # here we give addition [] for torch.cat in the nn
                     reward_component = reward_model(
-                        torch.tensor([self.env.state_option[int(sample_policy_theta.states[t])]]).to(self.device, torch.float),
-                        torch.tensor([self.env.action_option[int(sample_policy_theta.actions[t])]]).to(self.device, torch.float),
+                        torch.tensor(self.env.state_option[int(sample_policy_theta.states[t])]).to(self.device, torch.float),
+                        torch.tensor(self.env.action_option[int(sample_policy_theta.actions[t])]).to(self.device, torch.float),
                         torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
                     )
 
@@ -275,8 +275,8 @@ class PIAIRL():
                         # So we can just use the "estimated_mean_field_flow" we got before
                         value_per_sampler.append(
                             reward_model(
-                                torch.tensor([self.env.state_option[int(sample.states[current])]]).to(self.device, torch.float),
-                                torch.tensor([self.env.action_option[int(sample.actions[current])]]).to(self.device, torch.float),
+                                torch.tensor(self.env.state_option[int(sample.states[current])]).to(self.device, torch.float),
+                                torch.tensor(self.env.action_option[int(sample.actions[current])]).to(self.device, torch.float),
                                 torch.from_numpy(estimated_mean_field_flow[current, :]).to(self.device, torch.float)
                             ) - torch.log(torch.tensor(self.p_flow.val[current, int(sample.states[current]), int(sample.actions[current])]))
                         )
@@ -297,7 +297,7 @@ class PIAIRL():
                 # then we need to update the policy
                 for s in range(self.env.state_count):
                     new_policy = policy_model(
-                        torch.tensor([self.env.state_option[s]]).to(self.device, torch.float),
+                        torch.tensor(self.env.state_option[s]).to(self.device, torch.float),
                         torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
                     )
 
@@ -320,6 +320,25 @@ class PIAIRL():
 
                 # we also need to update the meanfield
                 self.train_mean_field(max_epoch, learning_rate, max_grad_norm, num_of_units)
+
+
+                # here is the code which we used to update the mean field value
+                for current in range(t, self.horizon):
+                    for s in range(self.env.state_count):
+                        new_mean_field = self.mean_field_model(torch.tensor(self.env.state_option[s]).to(self.device, torch.float),
+                                                               torch.tensor(t).to(self.device, torch.float)
+                                                               )
+
+                        estimated_mean_field_flow[t,s] = new_mean_field
+
+                    total = sum(estimated_mean_field_flow[t, :])
+                    if total != 0:
+                        estimated_mean_field_flow[t, :] /= total
+                    else:
+                        raise ValueError("Sum of values is zero, cannot normalize")
+
+                self.mf_flow.val = estimated_mean_field_flow
+
 
 
 
@@ -368,14 +387,14 @@ class PIAIRL():
 
                     # position x_onehot and time t_onehot
                     # we use this 2 variable to track the gradient so that we can do the loss
-                    x_onehot = torch.tensor([self.env.state_option[int(sample.states[t])]]).to(self.device, torch.float)
-                    t_onehot = torch.tensor([t]).to(self.device, torch.float)
+                    x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
+                    t_onehot = torch.tensor(t).to(self.device, torch.float)
 
                     # last position
                     # and here we need to make sure that this is legal
-                    x_last_onehot = torch.tensor([self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]]).to(self.device, torch.float)
+                    x_last_onehot = torch.tensor(self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device, torch.float)
 
-                    t_next_onehot = torch.tensor([int(t + 1) % self.horizon]).to(self.device, torch.float)
+                    t_next_onehot = torch.tensor(int(t + 1) % self.horizon).to(self.device, torch.float)
 
                     # so that we can track its gradient
                     x_onehot.requires_grad = True
@@ -402,8 +421,12 @@ class PIAIRL():
 
                     action_index_now = np.argmax(current_policy[int(sample.states[t])])
                     action_index_last = np.argmax(current_policy[int((sample.states[t] - 1)%self.env.state_count)])
-                    velocity_now = self.env.action_option[action_index_now]
-                    velocity_last_x =self.env.action_option[action_index_last]
+
+                    # here for we may have many dimensions' v
+                    # we need the normalize for this v
+
+                    velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
+                    velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
 
 
                     # time do not need one-hot
@@ -555,8 +578,8 @@ class PIAIRL():
                         In another word this is immediate Reward 
                         '''
                         q_values.val[t, s_current, a_current] += self.reward_model(
-                            torch.tensor([self.env.state_option[s_current]]).to(self.device,torch.float),
-                            torch.tensor([self.env.action_option[a_current]]).to(self.device, torch.float),
+                            torch.tensor(self.env.state_option[s_current]).to(self.device,torch.float),
+                            torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
                             torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
                             ).detach().cpu().numpy()
                         # next step

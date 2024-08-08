@@ -64,11 +64,11 @@ class MFAIRL(IRL):
                 '''
 
 
-
-                reward_per_step = [reward_model(torch.tensor([sample.states[t]]).to(self.device, torch.float),
-                                                torch.tensor([sample.actions[t]]).to(self.device, torch.float),
+                reward_per_step = [reward_model(torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float),
+                                                torch.tensor(self.env.action_option[int(sample.actions[t])]).to(self.device, torch.float),
                                                 torch.from_numpy(est_expert_mf_flow[t, :]).to(self.device, torch.float)) for t in range(self.horizon)
                                    ]
+
 
 
                 # reward sum
@@ -81,13 +81,13 @@ class MFAIRL(IRL):
                 
                 Why we need lastest - init
                 '''
-                reward_shaping_per_sample = reward_per_sample
-                                            # + shaping_model(torch.from_numpy(self.onehot_encoding(self.env.state_count, int(sample.states[self.horizon-1]))).to(self.device, torch.float),
-                                            #               torch.from_numpy(est_expert_mf_flow[self.horizon-1, :]).to(self.device, torch.float)
-                                            #               )\
-                                            # - shaping_model(torch.from_numpy(self.onehot_encoding(self.env.state_count, int(sample.states[0]))).to(self.device, torch.float),
-                                            #               torch.from_numpy(est_expert_mf_flow[0, :]).to(self.device, torch.float)
-                                            #               )
+                reward_shaping_per_sample = reward_per_sample \
+                                            + shaping_model(torch.tensor(self.env.state_option[int(sample.states[self.horizon-1])]).to(self.device, torch.float),
+                                                          torch.from_numpy(est_expert_mf_flow[self.horizon-1, :]).to(self.device, torch.float)
+                                                          )\
+                                            - shaping_model(torch.tensor(self.env.state_option[int(sample.states[0])]).to(self.device, torch.float),
+                                                          torch.from_numpy(est_expert_mf_flow[0, :]).to(self.device, torch.float)
+                                                          )
                 rewards.append(reward_shaping_per_sample)
 
             '''
@@ -95,24 +95,21 @@ class MFAIRL(IRL):
             '''
 
             # calculate expected shaping rewards of demonstrations
-            expected_shaping_reward = sum(rewards) / len(self.data)
+            expected_shaping_reward = torch.sum(torch.cat(rewards, dim=0).reshape((1, -1))) / len(self.data)
 
             # estimate partition function
-
-            # TODO Remainder
-            # logZ = torch.log(torch.sum(torch.exp(torch.cat(rewards, dim=0).reshape((1, -1))))).to(self.device, torch.float)
-            exp_rewards = sum(torch.exp(r) for r in rewards)
-            logZ = torch.log(exp_rewards).to(self.device, torch.float)
+            logZ = torch.log(torch.sum(torch.exp(torch.cat(rewards, dim=0).reshape((1, -1))))).to(self.device,
+                                                                                                  torch.float)
 
             # gradient descent
             optimizer1.zero_grad()
-            # optimizer2.zero_grad()
+            optimizer2.zero_grad()
             loss = - expected_shaping_reward + logZ
             loss.backward()
             U.clip_grad_norm_(reward_model.parameters(), max_grad_norm)
-            # U.clip_grad_norm_(shaping_model.parameters(), max_grad_norm)
+            U.clip_grad_norm_(shaping_model.parameters(), max_grad_norm)
             optimizer1.step()
-            # optimizer2.step()
+            optimizer2.step()
 
             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
 
