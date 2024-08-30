@@ -7,6 +7,7 @@ Remainder value type:
 
 """
 import logging
+import time
 
 import numpy as np
 import torch
@@ -20,6 +21,8 @@ from Algorithms.myModels import MeanFieldModel, RewardModel, PolicyModel
 from core import Environment, State, Action, MeanField, MeanFieldFlow, PolicyFlow, Policy,IRL,Trajectory
 from Environments import CARS
 from Algorithms.expert_training import Expert
+
+import time
 
 '''
 Constrain all the variables 
@@ -141,12 +144,15 @@ class PIAIRL():
 
         for epoch in range(max_epoch):
 
+            start_time = time.time()
+
             '''
             1. we get the meanfield_alpha from current policy
                 we store our policy in the self as an attribute 
             
             2. we also need the new trajectory which is induced by current policy  
             '''
+            
 
             # 1. we need sample the trajectory from our original policy
             self.data_policy_theta = self.generate_trajectories_from_policy_flow(self.num_of_game_plays, self.num_traj, self.p_flow, self.mf_flow,True)
@@ -342,7 +348,10 @@ class PIAIRL():
 
 
 
+            end_time = time.time()
+            epoch_duration = end_time - start_time
 
+            print(f"Time taken for one epoch: {epoch_duration:.4f} seconds")
             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
             # print(epoch)
             self.logger.info('=MFIRL: epoch:{}, loss:{}'.format(epoch, str(loss.detach().cpu().numpy())))
@@ -369,6 +378,11 @@ class PIAIRL():
             # this value is used to replace "estimate mean field flow" in our code
             est_mf_flow = None
             # print(epoch)
+            loss_total_mean = []
+
+            #FIXME we need to have a vlue to get the mean reward from all the trajectory
+            # here is the reward
+
             for sample in self.data_policy_theta:
 
                 # get the mean field for this time and states
@@ -379,7 +393,8 @@ class PIAIRL():
 
                 # here is used to store all the loss on this trajectory
                 # for we only update the policy on the whole trajectory
-                loss_total = []
+
+                # loss_total = []
 
                 for t in range(self.horizon):
                     # for we need the mean_field for every t and every sample
@@ -425,6 +440,11 @@ class PIAIRL():
                     # here for we may have many dimensions' v
                     # we need the normalize for this v
 
+                    # if self.env.name == 'FLOCK':
+                    #     velocity_now = np.linalg.norm(self.env.state_option[int(sample.states[t])][2:])
+                    #     velocity_last_x = np.linalg.norm(self.env.state_option[int((sample.states[t] - 1)%self.env.state_count)][2:])
+                    #
+                    # else:
                     velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
                     velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
 
@@ -460,18 +480,18 @@ class PIAIRL():
                     # Compute the custom loss as described
                     loss = left + right
 
-                    loss_total.append(loss)
+                    loss_total_mean.append(loss)
 
                 # here is the optimal path
-                residual =  torch.mean(torch.cat(loss_total,dim=0).reshape((1, -1))) # - ?
-                optimizer1.zero_grad()
-                residual.backward()
-                U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
-                optimizer1.step()
+            residual =  torch.stack(loss_total_mean).mean()# - ?
+            optimizer1.zero_grad()
+            residual.backward()
+            U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
+            optimizer1.step()
 
-                print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
-                      end='\r')
-                self.logger.info('=Mean_Field: epoch:{}, loss:{}'.format(epoch, str(residual.detach().cpu().numpy())))
+            print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
+                  end='\r')
+            self.logger.info('=Mean_Field: epoch:{}, loss:{}'.format(epoch, str(residual.detach().cpu().numpy())))
 
 
         self.mean_field_model = mean_field_model
@@ -513,7 +533,7 @@ class PIAIRL():
                 # Compute the next state based on the current state and action
                 # Assuming the environment has a method `next_state` to compute this
                 if t < self.horizon - 1:  # Check to prevent indexing error on the last step
-                    s_next = self.env.dynamics(State(state=s), Action(action=a))  # Update this method as per your environment dynamics
+                    s_next = self.env.dynamics(State(state=s), Action(action=a), MeanField(mean_field=current_mean_field_flow.val[t]))  # Update this method as per your environment dynamics
                     data[i].states[t + 1] = s_next.val[0]
                     s = int(s_next.val[0])  # Update current state to the next state
 

@@ -94,6 +94,9 @@ class MFAIRL(IRL):
             On above, we have already run through every sample in the data 
             '''
 
+
+
+
             # calculate expected shaping rewards of demonstrations
             expected_shaping_reward = torch.sum(torch.cat(rewards, dim=0).reshape((1, -1))) / len(self.data)
 

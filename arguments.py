@@ -36,7 +36,7 @@ def parse_args():
         4. --gamma: discount factor (Training Rate Or Learning rate)
         5. --beta: entropy regularisation strength (Max Entropy Using?)
     '''
-    parser.add_argument("--env_name", type=str, default="FLOCK", help="the environment model (FLOCK)")
+    parser.add_argument("--env_name", type=str, default="MAZE", help="the environment model (LR)")
     parser.add_argument("--is_original_dynamics", type=int, default=0, help="original or new dynamics. 0: original, 1: new")
     parser.add_argument("--horizon", type=int, default=8, help="horizon of mean field games")
     parser.add_argument("--gamma", type=float, default=0.99, help="discount factor")

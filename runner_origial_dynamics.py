@@ -44,6 +44,7 @@ if __name__ == '__main__':
     After this, we have the expert policy_flow and mean_field_flow
     '''
     expert = Expert(env=env, horizon=arglist.horizon)
+    #exper_data = expert.generate_trajectories(arglist.max_num_game_plays, arglist.num_traj)
     expert.compute_ermfne()
 
     clear_log_file('PIAIRL_training_log.txt')
@@ -61,6 +62,9 @@ if __name__ == '__main__':
             # Change from arglist.num_agent to arglist.num_traj
             trajectories = expert.generate_trajectories(num_of_game_plays, arglist.num_traj)
             # trajectoriesMDP = expert.generate_trajectories_MDP(num_of_game_plays, arglist.num_traj)
+
+
+
 
             mfirl = MFAIRL(data=trajectories, env=env, horizon=arglist.horizon, device=arglist.device)
             # mdpmfgirl = PLIRL(data=trajectoriesMDP, env=env, horizon=arglist.horizon, device=arglist.device)
@@ -115,6 +119,10 @@ if __name__ == '__main__':
 
     # figure for expected return
     samples = [i * 10 for i in range(1, 100)]
+
+    step_size = max(1, int((arglist.max_num_game_plays - 7) / 10))  # Adjust the divisor for fewer/more ticks
+    x_ticks = np.arange(7, arglist.max_num_game_plays + 1, step_size)
+
     sns.set(style="darkgrid", font_scale=2.0)
     g1 = sns.relplot(
         x="samples",
@@ -126,9 +134,9 @@ if __name__ == '__main__':
     #g.set(ylim=(-16.5,-13.7))
     plt.ylabel("Expected Return")
     plt.xlabel("game plays")
-    g1.set(xlim=(1, 10))
-    x_ticks = np.arange(1, 11, 1)
-    plt.xticks(x_ticks)
+    g1.set(xlim=(7,arglist.max_num_game_plays))
+    # x_ticks = np.arange(1, 11, 1)
+    plt.xticks(x_ticks,rotation=45)
     plt.title(arglist.env_name)
     #plt.figure(figsize=(5, 3))
     fig = plt.gcf()
@@ -147,14 +155,17 @@ if __name__ == '__main__':
     #g.set(ylim=(-16.5,-13.7))
     plt.ylabel("Dev. MF")
     plt.xlabel("game plays")
-    g1.set(xlim=(1, 10))
-    x_ticks = np.arange(1, 11, 1)
-    plt.xticks(x_ticks)
+    g1.set(xlim=(7,arglist.max_num_game_plays))
+    # x_ticks = np.arange(1, 11, 1)
+    plt.xticks(x_ticks,rotation=45)
     plt.title(arglist.env_name)
     #plt.figure(figsize=(5, 3))
     fig = plt.gcf()
     #fig.show(g)
     fig.savefig(results_save_path + 'mf.png')
+
+# nohup python3 -u runner_origial_dynamics.py --env_name=FLOCK --num_runs=10 --max_epoch=10 --horizon=8 > test_FLOCK.log 2>&1 &
+# nohup python3 -u runner_origial_dynamics.py --env_name=MAZE --num_runs=10 --max_epoch=10 --horizon=8 > test_maze.log 2>&1 &
 
     # figure for Dev. Policy
     plt.clf()
@@ -168,8 +179,8 @@ if __name__ == '__main__':
     )
     plt.ylabel("Dev. Policy")
     plt.xlabel("game plays")
-    g2.set(xlim=(1, 10))
-    plt.xticks(x_ticks)
+    g1.set(xlim=(7,arglist.max_num_game_plays))
+    plt.xticks(x_ticks,rotation=45)
     plt.title(arglist.env_name)
     fig = plt.gcf()
     fig.savefig(results_save_path + 'p.png')

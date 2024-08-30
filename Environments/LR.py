@@ -12,10 +12,22 @@ class Env(Environment):
     def __init__(self, is_original_dynamics, beta: float):
         super().__init__(is_original_dynamics, beta)
         self.name = 'LR'
-        self.state_shape = 2
-        self.action_shape = 2
+        self.state_shape = 1
+        self.action_shape = 1
         # hyper parameters for new dynamics
         self.prob = 0.2
+
+        self.state_count = 2
+        self.action_count = 2
+
+
+        self.state_option = [0,1]
+        self.action_option = [0,1]
+
+        self.time_unit = 1
+        self.position_unit = 1
+
+
 
     def get_reward(self, state, action, mean_field):
         if int(action.val[0]) == 0:
@@ -24,7 +36,7 @@ class Env(Environment):
             return Reward(reward=-mean_field.val[1] * 2)
 
     def advance(self, policy, mean_field):
-        next_mean_field = MeanField(mean_field=None, s=self.state_shape)
+        next_mean_field = MeanField(mean_field=None, s=self.state_count)
         if self.is_original_dynamics == 0:
             next_mean_field.val[0] = mean_field.val[0] * policy.val[0, 0] + mean_field.val[1] * policy.val[1, 0]
             next_mean_field.val[1] = mean_field.val[0] * policy.val[0, 1] + mean_field.val[1] * policy.val[1, 1]
@@ -33,7 +45,7 @@ class Env(Environment):
             next_mean_field.val[1] = 0.8 *( mean_field.val[0] * policy.val[0, 1] + mean_field.val[1] * policy.val[1, 1] ) + 0.1
         return next_mean_field
 
-    def dynamics(self, state, action, mean_field):
+    def dynamics(self, state, action, mean_field=None):
         if self.is_original_dynamics == 0:
             return State(state=int(action.val[0]))
         else:

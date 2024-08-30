@@ -93,10 +93,14 @@ class Env(Environment):
         self.position_unit = 1
 
 
+        # here we have the demand that mean velocity
+        # so that we will give the number of agent and its init state
 
 
 
-    def get_reward(self, state, action,mean_field):
+
+
+    def get_reward(self, state, action, mean_field):
 
         # Our reward is made from 3 parts
         # f value and L-2 norm for u (action) and v
@@ -108,13 +112,8 @@ class Env(Environment):
         v_x = 0
         v_y = 0
 
-        # get the mean velocity
-        for current in range(N):
-            # here is the v_x and v_y for this state
-            v_x += self.state_option[current][2]
-            v_y += self.state_option[current][3]
-        v_x_mean = v_x / N
-        v_y_mean = v_y / N
+        v_x_mean = (self.state_option[state.val[0]][2] / (1 - mean_field.val[state.val[0]]))
+        v_y_mean = (self.state_option[state.val[0]][3] / (1 - mean_field.val[state.val[0]]))
 
         inner = np.array([-v_x_mean + self.state_option[state.val[0]][2], -v_y_mean + self.state_option[state.val[0]][3]]) * mean_field.val[state.val[0]]
         f_value = -np.linalg.norm(inner, ord=1)**2
