@@ -33,7 +33,7 @@ MAX = 100000  # maximum number of iterations
 MIN = 1e-10
 
 
-class PIAIRL():
+class PIIRL():
     '''
         Max_epoch : 训练迭代的最大次数
         learning_rate：优化器的学习率。
@@ -96,6 +96,7 @@ class PIAIRL():
     # Loads a reward model from a specified path
     def load_model(self, path: str):
         self.reward_model = torch.load(path)
+        self.reward_model.to(self.device)
 
     # Converts a categorical variable into a one-hot encoded vector
     # all to 0 with length = shape
@@ -105,7 +106,7 @@ class PIAIRL():
         code[entry] = 1.0
         return code
 
-    def train_reward_model(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
+    def train(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
         reward_model = RewardModel(state_shape=self.env.state_shape,
                                    action_shape=self.env.action_shape,
                                    mf_shape=self.env.state_count,
@@ -115,9 +116,16 @@ class PIAIRL():
                                    action_shape=self.env.action_count,
                                    mf_shape=self.env.state_count,
                                    num_of_units=num_of_units).to(self.device)
+        # Initialize the mean field model
+        mean_field_model = MeanFieldModel(
+            state_shape=self.env.state_shape,
+            time_horizon=1,
+            num_of_units=num_of_units
+        ).to(self.device)
 
         optimizer_reward = optim.Adam(reward_model.parameters(), lr=learning_rate)
         optimizer_policy = optim.Adam(policy_model.parameters(), lr=learning_rate)
+        optimizer_mf = optim.Adam(mean_field_model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
         '''
         Here is the init part 
@@ -325,7 +333,11 @@ class PIAIRL():
 
 
                 # we also need to update the meanfield
-                self.train_mean_field(max_epoch, learning_rate, max_grad_norm, num_of_units)
+                # and we need to judge if it is more than 2 dim
+                if self.env.dim == 1:
+                    self.train_mean_field_dim_1_new(max_epoch, learning_rate, max_grad_norm, num_of_units, mean_field_model, optimizer_mf)
+                elif self.env.dim == 2:
+                    self.train_mean_field_dim_2(max_epoch, learning_rate, max_grad_norm, num_of_units)
 
 
                 # here is the code which we used to update the mean field value
@@ -362,7 +374,16 @@ class PIAIRL():
         self.policy_model = policy_model
 
 
-    def train_mean_field(self,max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
+    '''
+    This is the physics-informed which is fitted for the 1-d
+        For we just consider the before position and time 
+    
+    We should consider more if we consider 2-d
+        Like last position could be around (like 9 points around)
+        but the time should still be last 
+    '''
+
+    def train_mean_field_dim_1(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
         # this is the nn for the mean field value
         mean_field_model = MeanFieldModel(state_shape=self.env.state_shape,
                                           # this is the special attribute for our model
@@ -375,16 +396,10 @@ class PIAIRL():
 
         # then we start our nn for the mean field
         for epoch in range(max_epoch):
-            # this value is used to replace "estimate mean field flow" in our code
-            est_mf_flow = None
-            # print(epoch)
+
             loss_total_mean = []
 
-            #FIXME we need to have a vlue to get the mean reward from all the trajectory
-            # here is the reward
-
             for sample in self.data_policy_theta:
-
                 # get the mean field for this time and states
                 # This will give us all the mean field for this sample through our model
                 '''
@@ -396,25 +411,22 @@ class PIAIRL():
 
                 # loss_total = []
 
-                for t in range(self.horizon):
-                    # for we need the mean_field for every t and every sample
-                    # we use this iteration
+                # Initialize a list to store losses for each trajectory in the sample
 
-                    # position x_onehot and time t_onehot
-                    # we use this 2 variable to track the gradient so that we can do the loss
+
+                for t in range(self.horizon):
                     x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
                     t_onehot = torch.tensor(t).to(self.device, torch.float)
+                    x_last_onehot = torch.tensor(
+                        self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device,
+                                                                                                    torch.float)
+                    t_next_onehot = torch.tensor((t + 1) % self.horizon).to(self.device, torch.float)
 
-                    # last position
-                    # and here we need to make sure that this is legal
-                    x_last_onehot = torch.tensor(self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device, torch.float)
-
-                    t_next_onehot = torch.tensor(int(t + 1) % self.horizon).to(self.device, torch.float)
-
-                    # so that we can track its gradient
+                    # Set requires_grad to True for tensors where gradients are needed
                     x_onehot.requires_grad = True
                     t_onehot.requires_grad = True
 
+                    # Compute mean fields for current, next time step, and last x position
                     mean_field_now = mean_field_model(x_onehot, t_onehot)
                     mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
                     mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
@@ -424,7 +436,7 @@ class PIAIRL():
                     # TODO we get the probability of actions in this time
                     # TODO But for we are deterministic, so it will be all 0 but 1 for one action
                     # TODO we assume that it has been one_hot well
-                    current_policy = self.p_flow.val[t,:]
+                    current_policy = self.p_flow.val[t, :]
 
                     # then we need to get the policy which is the velocity
                     # And we use the mean velocity to represent
@@ -433,9 +445,8 @@ class PIAIRL():
                     '''
                         we need the max one 
                     '''
-
                     action_index_now = np.argmax(current_policy[int(sample.states[t])])
-                    action_index_last = np.argmax(current_policy[int((sample.states[t] - 1)%self.env.state_count)])
+                    action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
 
                     # here for we may have many dimensions' v
                     # we need the normalize for this v
@@ -445,9 +456,10 @@ class PIAIRL():
                     #     velocity_last_x = np.linalg.norm(self.env.state_option[int((sample.states[t] - 1)%self.env.state_count)][2:])
                     #
                     # else:
+
+                    # Calculate velocity for current and last x position
                     velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
                     velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
-
 
                     # time do not need one-hot
 
@@ -467,35 +479,286 @@ class PIAIRL():
                     Here we change our residual calculation process:
                         we choose use the delt_t and delt_x to get the residual
                         For we can not add 2 value with different dimension 
-                        
+
                     And we let the random step size fai = 1 
                     '''
 
-                    # First part role_t
-                    #
+
+                    # Compute the custom loss using the given formula
                     left = (mean_field_next_time - mean_field_now) / self.env.time_unit
-                    right = ((mean_field_now * velocity_now)-(mean_field_last_x * velocity_last_x)) / self.env.position_unit
-
-
-                    # Compute the custom loss as described
-                    loss = left + right
-
+                    right = ((mean_field_now * velocity_now) - (
+                                mean_field_last_x * velocity_last_x)) / self.env.position_unit
+                    loss = (left + right).abs()
                     loss_total_mean.append(loss)
 
-                # here is the optimal path
-            residual =  torch.stack(loss_total_mean).mean()# - ?
-            optimizer1.zero_grad()
-            residual.backward()
-            U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
-            optimizer1.step()
+            # Aggregate losses from the trajectory and perform a single optimization step per sample
+            residual = torch.mean(torch.cat((loss_total_mean),dim=0).reshape((1, -1)))
+            optimizer1.zero_grad()  # Zero gradients before backward pass
+            residual.backward()  # Backpropagation
+            U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)  # Gradient clipping
+            optimizer1.step()  # Optimizer step
 
+            # Log the loss
             print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
                   end='\r')
-            self.logger.info('=Mean_Field: epoch:{}, loss:{}'.format(epoch, str(residual.detach().cpu().numpy())))
+            self.logger.info(f'=Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
+
+            print()  # for better formatting of print output
 
 
         self.mean_field_model = mean_field_model
 
+
+    def train_mean_field_dim_2(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
+        # this is the nn for the mean field value
+        mean_field_model = MeanFieldModel(state_shape=self.env.state_shape,
+                                          # this is the special attribute for our model
+                                          # here is the time shape should be the 1
+                                          time_horizon=1,
+                                          num_of_units=num_of_units).to(self.device)
+
+        # this is the optimizer which is the actual runner
+        optimizer1 = optim.Adam(mean_field_model.parameters(), lr=learning_rate)
+
+        # then we start our nn for the mean field
+        for epoch in range(max_epoch):
+
+            loss_total_mean = []
+
+            for sample in self.data_policy_theta:
+                # get the mean field for this time and states
+                # This will give us all the mean field for this sample through our model
+                '''
+                For we only need the x-position and t-time for our model 
+                '''
+
+                # here is used to store all the loss on this trajectory
+                # for we only update the policy on the whole trajectory
+
+                # loss_total = []
+
+                # Initialize a list to store losses for each trajectory in the sample
+
+
+                for t in range(self.horizon):
+
+                    # then also need to record the policy
+                    # this will give us the pi^theta_t
+                    # TODO we get the probability of actions in this time
+                    # TODO But for we are deterministic, so it will be all 0 but 1 for one action
+                    # TODO we assume that it has been one_hot well
+                    current_policy = self.p_flow.val[t, :]
+
+                    x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
+                    t_onehot = torch.tensor(t).to(self.device, torch.float)
+
+                    # x_last could be the around
+                    # here we need to get all the neighbours around it
+
+                    # x_last_onehot = torch.tensor(
+                    #     self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device,
+                    #                                                                                 torch.float)
+
+                    neighbours = self.env.get_neighbors(int(sample.states[t]))
+                    x_last_around = []
+                    action_index_last = []
+                    for neighbour in neighbours:
+                        x_last_around.append(
+                            torch.tensor(
+                                    self.env.state_option[int(neighbour)]).to(self.device,torch.float))
+                        action_index_last.append(
+                            np.argmax(current_policy[int((neighbour) % self.env.state_count)])
+                        )
+
+                    t_next_onehot = torch.tensor((t + 1) % self.horizon).to(self.device, torch.float)
+
+                    # Set requires_grad to True for tensors where gradients are needed
+                    # x_onehot.requires_grad = True
+                    # t_onehot.requires_grad = True
+
+                    # Compute mean fields for current, next time step, and last x position
+                    mean_field_now = mean_field_model(x_onehot, t_onehot)
+                    mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
+
+                    # mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
+
+                    # here we get all the last mean field
+                    mean_field_last_x = []
+                    for x_last in x_last_around:
+                        mean_field_last_x.append(
+                            mean_field_model(x_last, t_onehot)
+                        )
+                    mean_field_last_x = torch.mean(torch.stack(mean_field_last_x), dim=0)
+
+                    # then we need to get the policy which is the velocity
+                    # And we use the mean velocity to represent
+                    # policy is s[a[]] like this
+                    # and we have every probability for every action
+                    '''
+                        we need the max one 
+                    '''
+                    action_index_now = np.argmax(current_policy[int(sample.states[t])])
+
+                    # here like the above x_last we still need to get the action last
+
+                    # action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
+
+
+                    # Calculate velocity for current and last x position
+                    velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
+
+                    velocity_last_x = []
+                    for action_index in action_index_last:
+                        velocity_last_x.append(np.linalg.norm(self.env.action_option[action_index]))
+                    velocity_last_x =  sum(velocity_last_x) / len(velocity_last_x)
+
+                    # velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
+
+                    # time do not need one-hot
+
+                    # then we need to train this one
+                    # Compute gradients with autograd
+                    # mu_t = torch.autograd.grad(mean_field_now, torch.tensor([t], dtype=torch.float32, requires_grad=True),
+                    #                            grad_outputs=torch.ones_like(mean_field_now),
+                    #                            create_graph=True)[0]
+                    #
+                    # # mu * policy and its gradient
+                    # product = mean_field_now * velocity_now
+                    # product_x = torch.autograd.grad(product, torch.tensor([sample.states[t]], dtype=torch.float32, requires_grad=True),
+                    #                     grad_outputs=torch.ones_like(product),
+                    #                     create_graph=True)[0]
+
+                    '''
+                    Here we change our residual calculation process:
+                        we choose use the delt_t and delt_x to get the residual
+                        For we can not add 2 value with different dimension 
+
+                    And we let the random step size fai = 1 
+                    '''
+
+
+                    # Compute the custom loss using the given formula
+                    left = (mean_field_next_time - mean_field_now) / self.env.time_unit
+                    right = ((mean_field_now * velocity_now) - (
+                                mean_field_last_x * velocity_last_x)) / self.env.position_unit
+                    loss = (left + right).abs()
+                    loss_total_mean.append(loss)
+
+            # Aggregate losses from the trajectory and perform a single optimization step per sample
+            residual = torch.mean(torch.cat((loss_total_mean),dim=0).reshape((1, -1)))
+            optimizer1.zero_grad()  # Zero gradients before backward pass
+            residual.backward()  # Backpropagation
+            U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)  # Gradient clipping
+            optimizer1.step()  # Optimizer step
+
+            # Log the loss
+            print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
+                  end='\r')
+            self.logger.info(f'=Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
+
+            print()  # for better formatting of print output
+
+
+        self.mean_field_model = mean_field_model
+
+
+    def train_mean_field_dim_1_new(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int,
+                                   mean_field_model, optimizer1):
+        optimizer1 = optim.Adam(mean_field_model.parameters(), lr=learning_rate, weight_decay=1e-5)
+
+        # Prepare the states and times tensors
+        states_all = []
+        times_all = []
+
+        for trajectory in self.data_policy_theta:
+            states = trajectory.states
+            num_steps = len(states)
+            time_steps = np.arange(num_steps)
+
+            # Extend states and times lists
+            states_all.extend(states * self.env.time_unit)
+            times_all.extend(time_steps * self.env.position_unit)
+
+        # Convert lists to tensors
+        states_tensor = torch.tensor(states_all, dtype=torch.float, device=self.device).view(-1, 1)
+        times_tensor = torch.tensor(times_all, dtype=torch.float, device=self.device).view(-1, 1)
+
+        # Compute indices
+        s_indices = (states_tensor.squeeze() / self.env.position_unit).long()
+        t_indices = (times_tensor.squeeze() / self.env.time_unit).long()
+
+        # Create masks
+        t_zero_mask = (t_indices == 0)
+        t_nonzero_mask = ~t_zero_mask
+
+        # Convert state_option to a tensor
+        state_option_tensor = torch.tensor(self.env.state_option, dtype=torch.float, device=self.device)
+
+        for epoch in range(max_epoch):
+            optimizer1.zero_grad()
+
+            # Initialize mean_field_values tensor
+            mean_field_values = torch.zeros(states_tensor.size(0), device=self.device, dtype=torch.float)
+
+            # Handle t = 0 cases
+            mean_field_values[t_zero_mask] = torch.tensor(
+                self.env.init_mf.val, device=self.device, dtype=torch.float
+            )[s_indices[t_zero_mask]]
+
+            # Handle t > 0 cases
+            if t_nonzero_mask.any():
+                # Prepare inputs for mean_field_model
+                x_onehot = state_option_tensor[s_indices[t_nonzero_mask]]
+                t_onehot = (t_indices[t_nonzero_mask] - 1).float().unsqueeze(1)
+
+                x_last_onehot = state_option_tensor[(s_indices[t_nonzero_mask] - 1) % self.env.state_count]
+                t_last_onehot = (t_indices[t_nonzero_mask] - 1).float().unsqueeze(1)
+
+                # Compute mean fields
+                mean_field_last_x_t = mean_field_model(x_last_onehot, t_last_onehot).squeeze()
+                mean_field_last_t = mean_field_model(x_onehot, t_onehot).squeeze()
+
+                # Get last policies
+                last_policy_indices = (t_indices[t_nonzero_mask] - 1).cpu().numpy()
+                last_policy = torch.tensor(
+                    self.p_flow.val[last_policy_indices],
+                    device=self.device, dtype=torch.float
+                )
+
+                # Get action indices
+                action_indices_last_t = torch.argmax(last_policy, dim=1)[s_indices[t_nonzero_mask]]
+                action_indices_last_x_t = torch.argmax(last_policy, dim=1)[
+                    (s_indices[t_nonzero_mask] - 1) % self.env.state_count]
+
+                # Compute velocities
+                action_option_tensor = torch.tensor(self.env.action_option, device=self.device)
+                velocity_last_t = torch.norm(action_option_tensor[action_indices_last_t], dim=1)
+                velocity_last_x_t = torch.norm(action_option_tensor[action_indices_last_x_t], dim=1)
+
+                # Compute mean field values for t > 0
+                mean_field_values[t_nonzero_mask] = (
+                        mean_field_last_t +
+                        mean_field_last_x_t * velocity_last_x_t -
+                        mean_field_last_t * velocity_last_t
+                )
+
+            # Compute predictions
+            preds = mean_field_model(states_tensor, times_tensor).squeeze()
+
+            # Compute residual loss
+            residual = (mean_field_values - preds).abs().mean()
+
+            # Backpropagation and optimization
+            residual.backward()
+            torch.nn.utils.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
+            optimizer1.step()
+
+            # Logging
+            print(f'Mean_Field: epoch: {epoch}, loss: {residual.item():.4f}', end='\r')
+            self.logger.info(f'Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
+            print()
+
+        self.mean_field_model = mean_field_model
 
     '''
     This is the generate method which can give the 

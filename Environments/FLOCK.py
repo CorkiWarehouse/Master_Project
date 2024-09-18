@@ -56,6 +56,7 @@ This expression means that if we wanted to know the
 
 
 import numpy as np
+import random
 
 from core import State, Reward, Environment, MeanField, Action
 
@@ -92,10 +93,20 @@ class Env(Environment):
         self.time_unit = 1
         self.position_unit = 1
 
+        self.limit = 2
+
+        self.dim = 2
+
 
         # here we have the demand that mean velocity
         # so that we will give the number of agent and its init state
 
+        self.init_mf = None
+        # self.init_mf[-1] = 1
+        # self.init_mf = MeanField(mean_field=self.init_mf)
+
+        self.p = 0.1
+        self.noise_option = [ i for i in range(-1,self.limit)]
 
 
 
@@ -112,8 +123,16 @@ class Env(Environment):
         v_x = 0
         v_y = 0
 
-        v_x_mean = (self.state_option[state.val[0]][2] / (1 - mean_field.val[state.val[0]]))
-        v_y_mean = (self.state_option[state.val[0]][3] / (1 - mean_field.val[state.val[0]]))
+        # Here we get the mean_v from the mean field value
+        # we just need to calculate all the percentage in the mf, for this value is made from all the states
+        # so that we can use the percentage from mf to get all the mean velocity
+        for s in range(self.state_count):
+            # get all the v and the percentage for it
+            v_x += self.state_option[s][2] * mean_field.val[s]
+            v_y += self.state_option[s][3] * mean_field.val[s]
+
+        v_x_mean = v_x / self.state_count
+        v_y_mean = v_y / self.state_count
 
         inner = np.array([-v_x_mean + self.state_option[state.val[0]][2], -v_y_mean + self.state_option[state.val[0]][3]]) * mean_field.val[state.val[0]]
         f_value = -np.linalg.norm(inner, ord=1)**2
@@ -181,8 +200,17 @@ class Env(Environment):
         # do the transition
         next_x = current_x_v[0] + current_x_v[2] * self.time_unit
         next_y = current_x_v[1] + current_x_v[3] * self.time_unit
-        next_vx = current_x_v[2] + current_action[0] * self.time_unit
-        next_vy = current_x_v[3] + current_action[1] * self.time_unit
+        if self.is_original_dynamics == 0:
+            next_vx = current_x_v[2] + current_action[0] * self.time_unit
+            next_vy = current_x_v[3] + current_action[1] * self.time_unit
+        else:
+            # here we give random choice
+            # we let this random be one of the action and the probability to have any of these action is equal
+            next_vx = current_x_v[2] + ( (1-self.p) * current_action[0] + self.p * random.choice(self.noise_option)) * self.time_unit
+            next_vy = current_x_v[3] + ( (1-self.p) * current_action[1] + self.p * random.choice(self.noise_option)) * self.time_unit
+
+            next_vx = self.find_closest_noise(next_vx)
+            next_vy = self.find_closest_noise(next_vy)
 
         # find the corresponding state
         next_state = [next_x,next_y,next_vx,next_vy]
@@ -211,8 +239,23 @@ class Env(Environment):
         # do the transition
         next_x = (current_x_v[0] + current_x_v[2] * self.time_unit)
         next_y = current_x_v[1] + current_x_v[3] * self.time_unit
-        next_vx = current_x_v[2] + current_action[0] * self.time_unit
-        next_vy = current_x_v[3] + current_action[1] * self.time_unit
+        # next_vx = current_x_v[2] + current_action[0] * self.time_unit
+        # next_vy = current_x_v[3] + current_action[1] * self.time_unit
+
+        if self.is_original_dynamics == 0:
+            next_vx = current_x_v[2] + current_action[0] * self.time_unit
+            next_vy = current_x_v[3] + current_action[1] * self.time_unit
+        else:
+            # here we give random choice
+            # we let this random be one of the action and the probability to have any of these action is equal
+
+            next_vx = current_x_v[2] + (
+                        (1 - self.p) * current_action[0] + self.p * random.choice(self.noise_option)) * self.time_unit
+            next_vy = current_x_v[3] + (
+                        (1 - self.p) * current_action[1] + self.p * random.choice(self.noise_option)) * self.time_unit
+
+            next_vx = self.find_closest_noise(next_vx)
+            next_vy = self.find_closest_noise(next_vy)
 
         # find the corresponding state
         next_state = [next_x, next_y, next_vx, next_vy]
@@ -241,5 +284,34 @@ class Env(Environment):
 
         return new_result
 
+    def get_neighbors(self, state, mean_field=None):
+        # Convert state_index to x, y coordinates
+        x, y, vx, vy = self.state_option[state]
 
+        # Possible movements: left, right, up, down
+        movements = self.velocity_option
+        actions = self.action_option
+        neighbors = []
+
+        for dx, dy in movements:
+            nx, ny = x - dx * self.time_unit, y - dy*self.time_unit
+            for d_v_x, d_v_y in actions:
+                n_v_x, n_v_y = vx - d_v_x*self.time_unit, vy - d_v_y*self.time_unit
+
+                # Check if the new position is within grid limits
+                if 0 <= nx < self.limit and 0 <= ny < self.limit:
+                    # Find the index of this valid neighbor position
+                    neighbor_index = np.flatnonzero((self.state_option == [nx, ny, n_v_x, n_v_y]).all(axis=1))
+                    if neighbor_index.size > 0:
+                        neighbors.append(neighbor_index[0])
+
+        return np.array(neighbors)
+
+    def find_closest_noise(self, target_value):
+        # 计算与每个noise值的绝对差距
+        differences = [abs(n - target_value) for n in self.noise_option]
+        # 找到最小差距的索引
+        min_index = differences.index(min(differences))
+        # 返回最接近的值
+        return self.noise_option[min_index]
 

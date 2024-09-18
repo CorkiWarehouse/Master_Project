@@ -17,6 +17,7 @@ In state, we have this options:
 And for we have the time
 
 """
+import random
 
 import numpy as np
 from core import State, Reward, Environment, MeanField, Action
@@ -40,7 +41,7 @@ class Env(Environment):
 
         self.velocity_max = 1 # max velocity
 
-        self.total_time = 8  # time horizon
+        self.total_time = 10  # time horizon
 
         # TODO Could we still use this value ?
         self.action_option = np.round(np.arange(0, 1, self.time_unit), 3).tolist()  # here is all velocity choices
@@ -50,6 +51,16 @@ class Env(Environment):
         # this value is replaced by the env.horizen
         self.state_count = len(self.state_option)
         self.action_count = len(self.action_option)
+
+        self.p = 0.1
+        self.noise_option = self.action_option
+
+        # here is the init meanField
+        values = np.random.rand(self.state_count)
+        self.init_mf = MeanField( mean_field= values/values.sum(), s = self.state_count)
+
+
+        self.dim = 1
 
     '''
     Here is the reward function 
@@ -184,10 +195,21 @@ class Env(Environment):
 
         # get the next time and position
         # if it out of range
-        x_next_position = (x_position + self.time_unit * velocity) % self.road_length
+        # x_next_position = (x_position + self.time_unit * velocity) % self.road_length
+        if self.is_original_dynamics == 0:
+            # Original dynamics without noise
+            x_next_position = (x_position + self.time_unit * velocity) % self.road_length
+        else:
+            # Modified dynamics with noise
+            noise_velocity = (1 - self.p) * velocity + self.p * random.choice(self.noise_option)
+            x_next_position = (x_position + self.time_unit * noise_velocity) % self.road_length
+            x_next_position = self.find_closest_position(x_next_position)
 
         # here we give this value's closest value
         x_next_index =  self.state_option.index(min(self.state_option, key=lambda x: abs(x - x_next_position)))
+
+        if x_next_index == state.val[0]:
+            x_next_index = (x_next_index + 1) % self.state_count
 
         # then return the next state
         next_state = State(state = x_next_index)
@@ -207,22 +229,42 @@ class Env(Environment):
 
         # change the only choice to 1
         # But we need to consider that our car's next state is deterministic
-        current_location = self.state_option[state.val[0]]
+        x_position = self.state_option[state.val[0]]
 
         # then get the action
-        current_action = self.action_option[action.val[0]]
+        velocity = self.action_option[action.val[0]]
 
 
         # then get the next state's position
-        next_location = (current_location + self.time_unit * current_action) % self.road_length
+        # next_location = (current_location + self.time_unit * current_action) % self.road_length
 
-        next_state_index = self.state_option.index(min(self.state_option, key=lambda x: abs(x - next_location)))
+        if self.is_original_dynamics == 0:
+            # Original dynamics without noise
+            x_next_position = (x_position + self.time_unit * velocity) % self.road_length
+        else:
+            # Modified dynamics with noise
+            noise_velocity = (1 - self.p) * velocity + self.p * random.choice(self.noise_option)
+            x_next_position = (x_position + self.time_unit * noise_velocity) % self.road_length
+            x_next_position = self.find_closest_position(x_next_position)
+
+
+        next_state_index = self.state_option.index(min(self.state_option, key=lambda x: abs(x - x_next_position)))
+
+        if next_state_index == state.val[0]:
+            next_state_index = (next_state_index + 1) % self.state_count
 
         next_prob[next_state_index] = 1
 
 
         return next_prob
 
+    def find_closest_position(self, target_position):
+        # Calculate absolute differences
+        differences = [abs(x - target_position) for x in self.state_option]
+        # Find index of the minimum difference
+        min_index = differences.index(min(differences))
+        # Return the closest position
+        return self.state_option[min_index]
 
     '''
     Here current_position is the 

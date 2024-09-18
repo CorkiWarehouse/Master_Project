@@ -44,15 +44,21 @@ class Expert(object):
 
     def compute_ermfne(self):
         mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+        if self.env.init_mf is not None:
+            # print(mf_flow.val[0])
+            # print(self.env.init_mf.val[0])
+            mf_flow.val[0] = self.env.init_mf.val
         p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
         for _ in range(MAX):
             p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
             q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
             for s in range(self.env.state_count):
+                # p_flow.val[self.horizon - 1, s, :] = np.array(
+                #     [1 / self.env.action_count for _ in range(self.env.action_count)])
                 p_flow.val[self.horizon - 1, s, :] = np.array(
-                    [1 / self.env.action_count for _ in range(self.env.action_count)])
+                [np.random.dirichlet(np.ones(self.env.action_count))])
 
-            # print(p_flow.val)
+                    # print(p_flow.val)
 
             # compute Q values and policy flow
             for t in reversed(range(0, self.horizon - 1)):
@@ -104,8 +110,10 @@ class Expert(object):
             #sinkhorn = geomloss.SamplesLoss('sinkhorn')
             #distance = np.array([sinkhorn(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) for t in range(0, self.horizon)])
             distance = torch.nn.MSELoss(reduction='sum', size_average=True)
+            print(distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)))
             if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
                 # compute expected return under equilibrium and terminate iteration
+                print("in")
                 for s in range(0, self.env.state_count):
                     partition = 0.0
                     for a in range(0, self.env.action_count):

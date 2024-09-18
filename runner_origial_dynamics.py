@@ -7,7 +7,7 @@ import numpy as np
 
 import arguments
 import Environments
-from Algorithms.PIAIRL import PIAIRL
+from Algorithms.PIIRL import PIIRL
 from Algorithms.expert_training import Expert
 from Algorithms.mfairl import MFAIRL
 from Algorithms.plirl import PLIRL
@@ -47,11 +47,11 @@ if __name__ == '__main__':
     #exper_data = expert.generate_trajectories(arglist.max_num_game_plays, arglist.num_traj)
     expert.compute_ermfne()
 
-    clear_log_file('PIAIRL_training_log.txt')
+    clear_log_file('PIMFIRL_training_log.txt')
 
 
     # performance comparison with varying number of samples
-    results = pd.DataFrame(columns=['samples', 'method', 'return', 'Dev. MF', 'Dev. Policy'])
+    results = pd.DataFrame(columns=['samples', 'method', 'difference between expert', 'Dev. MF', 'Dev. Policy'])
     for run in range(arglist.num_runs): #arglist.num_runs
         print('===============Run: #' + str(run) + '================')
         num_of_game_plays = 1
@@ -64,12 +64,10 @@ if __name__ == '__main__':
             # trajectoriesMDP = expert.generate_trajectories_MDP(num_of_game_plays, arglist.num_traj)
 
 
-
-
             mfirl = MFAIRL(data=trajectories, env=env, horizon=arglist.horizon, device=arglist.device)
             # mdpmfgirl = PLIRL(data=trajectoriesMDP, env=env, horizon=arglist.horizon, device=arglist.device)
 
-            piairl = PIAIRL(data_expert = trajectories, env=env, horizon=arglist.horizon, device=arglist.device, num_of_game_plays=num_of_game_plays, num_traj= arglist.num_traj)
+            piirl = PIIRL(data_expert = trajectories, env=env, horizon=arglist.horizon, device=arglist.device, num_of_game_plays=num_of_game_plays, num_traj= arglist.num_traj)
 
             mfirl.train(max_epoch=arglist.max_epoch,
                         learning_rate=arglist.lr,
@@ -81,7 +79,7 @@ if __name__ == '__main__':
             #                 max_grad_norm=arglist.max_grad_norm,
             #                 num_of_units=arglist.num_units_1)
 
-            piairl.train_reward_model(max_epoch=arglist.max_epoch,
+            piirl.train(max_epoch=arglist.max_epoch,
                         learning_rate=arglist.lr,
                         max_grad_norm=arglist.max_grad_norm,
                         num_of_units=arglist.num_units_1)
@@ -98,17 +96,17 @@ if __name__ == '__main__':
             mfirl.save_model(model_save_path + 'mfirl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
             # mdpmfgirl.save_model(model_save_path + 'mdp_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
 
-            piairl_expected_return, piairl_dev_mf, piairl_dev_p = piairl.divergence(expert_mf_flow=expert.mf_flow,expert_p_flow=expert.p_flow)
+            piairl_expected_return, piairl_dev_mf, piairl_dev_p = piirl.divergence(expert_mf_flow=expert.mf_flow,expert_p_flow=expert.p_flow)
             results = results._append(pd.DataFrame(
-                [[num_of_game_plays, 'PIAIRL', float(piairl_expected_return), float(piairl_dev_mf), float(piairl_dev_p)],
-                 [num_of_game_plays, 'MFIRL', float(mfirl_expected_return), float(mfirl_dev_mf), float(mfirl_dev_p)],
-                                                        [num_of_game_plays, 'EXPERT', float(expert.expected_return), 0.0, 0.0]],
-                                                       columns=['samples', 'method', 'return', 'Dev. MF', 'Dev. Policy']))
+                [[num_of_game_plays, 'PIIRL', abs(float(piairl_expected_return) - float(expert.expected_return)), float(piairl_dev_mf), float(piairl_dev_p)],
+                 [num_of_game_plays, 'MFIRL', abs(float(mfirl_expected_return) - float(expert.expected_return)), float(mfirl_dev_mf), float(mfirl_dev_p)],
+                                                        [num_of_game_plays, 'EXPERT', 0.0, 0.0, 0.0]],
+                                                       columns=['samples', 'method', 'difference between expert', 'Dev. MF', 'Dev. Policy']))
 
-            piairl.save_model(model_save_path + 'piairl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
+            piirl.save_model(model_save_path + 'pimfirl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
             num_of_game_plays += 1
 
-            print("we have done one round ")
+            #print("we have done one round ")
 
     # save results
     results.to_csv(results_save_path + arglist.env_name + '.csv')
@@ -120,23 +118,23 @@ if __name__ == '__main__':
     # figure for expected return
     samples = [i * 10 for i in range(1, 100)]
 
-    step_size = max(1, int((arglist.max_num_game_plays - 7) / 10))  # Adjust the divisor for fewer/more ticks
-    x_ticks = np.arange(7, arglist.max_num_game_plays + 1, step_size)
+    step_size = 1  # Adjust the divisor for fewer/more ticks
+    x_ticks = np.arange(1, arglist.max_num_game_plays + 1, step_size)
 
     sns.set(style="darkgrid", font_scale=2.0)
     g1 = sns.relplot(
         x="samples",
-        y="return",
+        y="difference between expert",
         data=results,
         kind="line",
         hue="method",
     )
     #g.set(ylim=(-16.5,-13.7))
-    plt.ylabel("Expected Return")
+    plt.ylabel("Difference between Expert")
     plt.xlabel("game plays")
-    g1.set(xlim=(7,arglist.max_num_game_plays))
+    g1.set(xlim=(1,arglist.max_num_game_plays))
     # x_ticks = np.arange(1, 11, 1)
-    plt.xticks(x_ticks,rotation=45)
+    plt.xticks(x_ticks)
     plt.title(arglist.env_name)
     #plt.figure(figsize=(5, 3))
     fig = plt.gcf()
@@ -155,17 +153,14 @@ if __name__ == '__main__':
     #g.set(ylim=(-16.5,-13.7))
     plt.ylabel("Dev. MF")
     plt.xlabel("game plays")
-    g1.set(xlim=(7,arglist.max_num_game_plays))
+    g1.set(xlim=(1,arglist.max_num_game_plays))
     # x_ticks = np.arange(1, 11, 1)
-    plt.xticks(x_ticks,rotation=45)
+    plt.xticks(x_ticks)
     plt.title(arglist.env_name)
     #plt.figure(figsize=(5, 3))
     fig = plt.gcf()
     #fig.show(g)
     fig.savefig(results_save_path + 'mf.png')
-
-# nohup python3 -u runner_origial_dynamics.py --env_name=FLOCK --num_runs=10 --max_epoch=10 --horizon=8 > test_FLOCK.log 2>&1 &
-# nohup python3 -u runner_origial_dynamics.py --env_name=MAZE --num_runs=10 --max_epoch=10 --horizon=8 > test_maze.log 2>&1 &
 
     # figure for Dev. Policy
     plt.clf()
@@ -179,8 +174,8 @@ if __name__ == '__main__':
     )
     plt.ylabel("Dev. Policy")
     plt.xlabel("game plays")
-    g1.set(xlim=(7,arglist.max_num_game_plays))
-    plt.xticks(x_ticks,rotation=45)
+    g1.set(xlim=(1,arglist.max_num_game_plays))
+    plt.xticks(x_ticks)
     plt.title(arglist.env_name)
     fig = plt.gcf()
     fig.savefig(results_save_path + 'p.png')

@@ -389,6 +389,8 @@ class IRL(object):
     # Loads a reward model from a specified path
     def load_model(self, path: str):
         self.reward_model = torch.load(path)
+        # here i change this load_mode so that ensure it will be got on the GPU
+        self.reward_model.to(self.device)
 
     # Converts a categorical variable into a one-hot encoded vector
     # all to 0 with length = shape
