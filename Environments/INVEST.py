@@ -28,6 +28,10 @@ class Env(Environment):
         self.time_unit = 1
         self.position_unit = 1
 
+        self.init_mf = None
+
+        self.dim = 1
+
     def get_reward(self, state, action, mean_field):
         mean = self.mean_quality(mean_field)
         reward = self.d * state.val / 10 - self.c * mean - self.l * action.val

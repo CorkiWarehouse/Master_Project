@@ -38,7 +38,7 @@ def parse_args():
     '''
     parser.add_argument("--env_name", type=str, default="CARS", help="the environment model (LR)")
     parser.add_argument("--is_original_dynamics", type=int, default=0, help="original or new dynamics. 0: original, 1: new")
-    parser.add_argument("--horizon", type=int, default=8, help="horizon of mean field games")
+    parser.add_argument("--horizon", type=int, default=10, help="horizon of mean field games")
     parser.add_argument("--gamma", type=float, default=0.99, help="discount factor")
     parser.add_argument("--beta", type=float, default=1.0, help="entropy regularisation strength")
 
@@ -55,9 +55,9 @@ def parse_args():
                                                             neural network used in the model) 
         5. --num_units : number of units
     '''
-    parser.add_argument("--max_epoch", type=int, default=15, help="maximum epoch length")
+    parser.add_argument("--max_epoch", type=int, default=10, help="maximum epoch length")
     parser.add_argument("--max_grad_norm", type=float, default=0.5, help="max gradient norm for clip")
-    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate for adam optimizer")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate for adam optimizer")
     parser.add_argument("--num_units_1", type=int, default=64, help="number of units in the MLP")
     parser.add_argument("--num_units_2", type=int, default=32, help="number of units in the MLP")
     parser.add_argument("--num_units", type=int, default=32, help="number of units in the MLP")
@@ -73,8 +73,8 @@ def parse_args():
         3. --max_num_game_plays: maximal number of sampled game_plays (N)
     '''
 
-    parser.add_argument("--num_runs", type=int, default=10, help="number of independent runs")
-    parser.add_argument("--num_traj", type=int, default=10, help="number of trajectories generated per game play")
+    parser.add_argument("--num_runs", type=int, default=5, help="number of independent runs")
+    parser.add_argument("--num_traj", type=int, default=30, help="number of trajectories generated per game play")
     parser.add_argument("--max_num_game_plays", type=int, default=10, help="maximal number of sampled game_plays")
 
     # checkpointing

@@ -142,42 +142,70 @@ This is the neural network which is used to train the policy
 '''
 
 
+# class MeanFieldModel(nn.Module):
+#     def __init__(self, state_shape, time_horizon, num_of_units):
+#         super(MeanFieldModel, self).__init__()
+#         self.ReLU = nn.ReLU()
+#         self.layer1 = nn.Linear(time_horizon + state_shape, num_of_units)
+#         self.layer2 = nn.Linear(num_of_units, num_of_units // 2)
+#         self.layer3 = nn.Linear(num_of_units // 2, num_of_units // 2 // 2)
+#         self.layer4 = nn.Linear(num_of_units // 2 // 2, num_of_units // 2 // 2 // 2)
+#         self.output = nn.Linear(num_of_units // 2 // 2 // 2, 1)
+#         self.reset_parameters()
+#         self.train()
+#
+#     def reset_parameters(self):
+#         nn.init.xavier_uniform_(self.layer1.weight, gain=nn.init.calculate_gain('relu'))
+#         nn.init.xavier_uniform_(self.layer2.weight, gain=nn.init.calculate_gain('relu'))
+#         nn.init.xavier_uniform_(self.layer3.weight, gain=nn.init.calculate_gain('relu'))
+#         nn.init.xavier_uniform_(self.layer4.weight, gain=nn.init.calculate_gain('relu'))
+#         nn.init.xavier_uniform_(self.output.weight, gain=nn.init.calculate_gain('relu'))
+#
+#     def forward(self, state_input, time_input):
+#
+#         state_input, action_input, mf_input, time_input = prepare_tensors(state=state_input, time=time_input)
+#
+#
+#
+#         x_cat = self.ReLU(self.layer1(torch.cat([state_input, time_input], dim=0)))
+#         x2 = self.ReLU(self.layer2(x_cat))
+#         x3 = self.ReLU(self.layer3(x2))
+#         x4 = self.ReLU(self.layer4(x3))
+#         value = torch.sigmoid(self.output(x4))  # Use sigmoid to ensure output is between 0 and 1
+#         return value
+
 class MeanFieldModel(nn.Module):
     def __init__(self, state_shape, time_horizon, num_of_units):
         super(MeanFieldModel, self).__init__()
-        self.ReLU = nn.LeakyReLU(0.01)
-        self.layer1 = nn.Linear(time_horizon + state_shape, num_of_units)
-        self.layer2 = nn.Linear(num_of_units, num_of_units // 2)
-        self.layer3 = nn.Linear(num_of_units // 2, num_of_units // 2 // 2)
-        self.layer4 = nn.Linear(num_of_units // 2 // 2, num_of_units // 2 // 2 // 2)
-        self.output = nn.Linear(num_of_units // 2 // 2 // 2, 1)
+        input_size = time_horizon + state_shape
+
+        self.layers = nn.Sequential(
+            nn.Linear(input_size, num_of_units),
+            nn.ReLU(),
+            nn.Linear(num_of_units, num_of_units // 2),
+            nn.ReLU(),
+            nn.Linear(num_of_units // 2, num_of_units // 4),
+            nn.ReLU(),
+            nn.Linear(num_of_units // 4, num_of_units // 8),
+            nn.ReLU(),
+            nn.Linear(num_of_units // 8, 1),
+            nn.Sigmoid()
+        )
+
         self.reset_parameters()
         self.train()
 
     def reset_parameters(self):
-        nn.init.xavier_uniform_(self.layer1.weight, gain=nn.init.calculate_gain('leaky_relu'))
-        nn.init.xavier_uniform_(self.layer2.weight, gain=nn.init.calculate_gain('leaky_relu'))
-        nn.init.xavier_uniform_(self.layer3.weight, gain=nn.init.calculate_gain('leaky_relu'))
-        nn.init.xavier_uniform_(self.layer4.weight, gain=nn.init.calculate_gain('leaky_relu'))
-        nn.init.xavier_uniform_(self.output.weight, gain=nn.init.calculate_gain('leaky_relu'))
+        for layer in self.layers:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight, gain=nn.init.calculate_gain('relu'))
 
     def forward(self, state_input, time_input):
-
         state_input, action_input, mf_input, time_input = prepare_tensors(state=state_input, time=time_input)
-
-        # 确保两个输入都有两个维度
-        if state_input.dim() == 1:
-            state_input = state_input.unsqueeze(1)  # 添加一个维度，使其形状为 [batch_size, 1]
-        if time_input.dim() == 1:
-            time_input = time_input.unsqueeze(1)  # 添加一个维度，使其形状为 [batch_size, 1]
-
-        # we let them be in the column
-        x_cat = self.ReLU(self.layer1(torch.cat([state_input, time_input], dim=1)))
-        x2 = self.ReLU(self.layer2(x_cat))
-        x3 = self.ReLU(self.layer3(x2))
-        x4 = self.ReLU(self.layer4(x3))
-        value = torch.sigmoid(self.output(x4))  # Use sigmoid to ensure output is between 0 and 1
-        return value
+        x = torch.cat([state_input, time_input], dim=0)
+        x = self.layers[:-1](x)  # Pass through all layers except the last one
+        x = self.layers[-1](x)  # Apply the final Sigmoid activation
+        return x
 
 class PolicyModel(nn.Module):
     def __init__(self, state_shape, action_shape, mf_shape, num_of_units):

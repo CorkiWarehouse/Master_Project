@@ -304,9 +304,6 @@ class Environment(object):
 
         self.state_count = None
         self.action_count = None
-
-        self.state_option = None
-        self.action_option = None
         pass
 
     def get_observation(self):
@@ -389,8 +386,6 @@ class IRL(object):
     # Loads a reward model from a specified path
     def load_model(self, path: str):
         self.reward_model = torch.load(path)
-        # here i change this load_mode so that ensure it will be got on the GPU
-        self.reward_model.to(self.device)
 
     # Converts a categorical variable into a one-hot encoded vector
     # all to 0 with length = shape
@@ -467,10 +462,11 @@ class IRL(object):
                         
                         In another word this is immediate Reward 
                         '''
-                        q_values.val[t, s_current, a_current] += self.reward_model(torch.tensor(self.env.state_option[s_current]).to(self.device, torch.float),
-                                                                                   torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
-                                                                                   torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
-                                                                                   ).detach().cpu().numpy()
+                        q_values.val[t, s_current, a_current] += self.reward_model(
+                            torch.tensor(self.env.state_option[s_current]).to(self.device, torch.float),
+                            torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
+                            torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
+                            ).detach().cpu().numpy()
                         # next step
                         '''
                         First we need to consider the next reward

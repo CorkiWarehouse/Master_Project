@@ -25,16 +25,24 @@ class Env(Environment):
         self.name = 'ISLING'
 
         # will be [-1,1]
-        self.state_shape = 2
+        self.state_shape = 1
 
         # for we only allow [-1,1] to be our
-        self.action_shape = 2
+        self.action_shape = 1
 
         # here is the true value
-        self.state_value = [-1,1]
-        self.action_value = [-1,1]
+        self.state_option = [-1,1]
+        self.action_option = [-1,1]
+
+        self.state_count = 2
+        self.action_count = 2
 
         # here is the variables that is used in the PINN
+        self.time_unit = 1
+        self.position_unit = 2
+
+        self.init_mf = None
+        self.dim = 1
 
 
     def get_reward(self, state, action, mean_field,h = 0):
@@ -43,11 +51,11 @@ class Env(Environment):
         # And right this action will give the influnce on this System
         # we use the MF to represent this world
 
-        left = h * self.state_value[state.val[0]]
+        left = h * self.state_option[state.val[0]]
 
         lamed = 1
 
-        right = mean_field.val[state.val[0]] * self.action_value[action.val[0]]
+        right = mean_field.val[state.val[0]] * self.action_option[action.val[0]]
 
         reward = left + 0.5 * lamed * right
 
@@ -56,20 +64,20 @@ class Env(Environment):
 
     def advance(self, policy, mean_field) -> MeanField:
         # init
-        next_mean_field = MeanField(mean_field=None, s=self.state_shape)
+        next_mean_field = MeanField(mean_field=None, s=self.state_count)
 
         # here is all the next_state
-        for next_state in range(self.state_shape):
+        for next_state in range(self.state_count):
             test_set = []
             sum_next = 0
             # here is all the current state which can reach to next one
             # but for our time_unit is 5
             # not all the action that can reach this 'next_state'
-            for current_state in range(self.state_shape):
+            for current_state in range(self.state_count):
                 sum_policy_transition = 0
 
                 # we directly check all the valid actions
-                for current_action in range(self.action_shape):
+                for current_action in range(self.action_count):
                     current_state_policy = policy.val[current_state, current_action]
 
                     # for we have the deterministic policy
@@ -103,11 +111,12 @@ class Env(Environment):
 
     def dynamics(self, state, action, mean_field=None) -> State:
 
-        next_state = int(action.val[0])
+        next_state = np.array([0,0])
 
-        # if we decide to do not change we will stay the state
-        if self.trans_prob(state, action, mean_field)[action.val[0]] == 0 :
-            next_state = int(state.val[0])
+        if int(action.val[0]) == 1:
+            next_state[1] = 1
+        else:
+            next_state[0] = 1
 
         # then return the next state
         next_state = State(state=next_state)
@@ -126,10 +135,13 @@ class Env(Environment):
     # FIXME this should be the state
     def trans_prob(self, state, action, mean_field) -> np.ndarray:
         # this is the length value
-        next_prob = np.zeros(self.state_shape)
+        next_prob = np.zeros(self.state_count)
 
         # here we will consider a process to judge if we will change
 
-        next_prob[action.val[0]] = 1
+        if int(action.val[0]) == 1:
+            next_prob[1] = 1
+        else:
+            next_prob[0] = 1
 
         return next_prob

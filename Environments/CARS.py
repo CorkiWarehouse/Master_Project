@@ -35,7 +35,7 @@ class Env(Environment):
         self.action_shape = 1
 
         # this is one hyper-parameter
-        self.position_unit = 1/8 # here is the delt_x
+        self.position_unit = 1/10 # here is the delt_x
         self.time_unit = self.position_unit  # delt_t time difference
         self.road_length = 1 # this is the length of the road
 
@@ -44,7 +44,7 @@ class Env(Environment):
         self.total_time = 10  # time horizon
 
         # TODO Could we still use this value ?
-        self.action_option = np.round(np.arange(0, 1, self.time_unit), 3).tolist()  # here is all velocity choices
+        self.action_option = np.round(np.arange(self.time_unit, 1+self.time_unit, self.time_unit), 3).tolist()  # here is all velocity choices
         self.state_option = np.round(np.arange(0,1,self.position_unit),3).tolist()
         # self.current_velocity = [0 for i in range(self.state_shape)]
 
@@ -56,8 +56,10 @@ class Env(Environment):
         self.noise_option = self.action_option
 
         # here is the init meanField
-        values = np.random.rand(self.state_count)
-        self.init_mf = MeanField( mean_field= values/values.sum(), s = self.state_count)
+        # values = np.random.rand(self.state_count)
+        # self.init_mf = MeanField( mean_field= values/values.sum(), s = self.state_count)
+
+        self.init_mf = None
 
 
         self.dim = 1
@@ -208,8 +210,8 @@ class Env(Environment):
         # here we give this value's closest value
         x_next_index =  self.state_option.index(min(self.state_option, key=lambda x: abs(x - x_next_position)))
 
-        if x_next_index == state.val[0]:
-            x_next_index = (x_next_index + 1) % self.state_count
+        # if x_next_index == state.val[0]:
+        #     x_next_index = (x_next_index + 1) % self.state_count
 
         # then return the next state
         next_state = State(state = x_next_index)
@@ -250,8 +252,8 @@ class Env(Environment):
 
         next_state_index = self.state_option.index(min(self.state_option, key=lambda x: abs(x - x_next_position)))
 
-        if next_state_index == state.val[0]:
-            next_state_index = (next_state_index + 1) % self.state_count
+        # if next_state_index == state.val[0]:
+        #     next_state_index = (next_state_index + 1) % self.state_count
 
         next_prob[next_state_index] = 1
 

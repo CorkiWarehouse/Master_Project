@@ -56,7 +56,7 @@ class Expert(object):
                 # p_flow.val[self.horizon - 1, s, :] = np.array(
                 #     [1 / self.env.action_count for _ in range(self.env.action_count)])
                 p_flow.val[self.horizon - 1, s, :] = np.array(
-                [np.random.dirichlet(np.ones(self.env.action_count))])
+                    [1 / self.env.action_count for _ in range(self.env.action_count)])
 
                     # print(p_flow.val)
 
@@ -70,6 +70,7 @@ class Expert(object):
                                                                                          t])).val[0]
                         # next step
                         for s_next in range(self.env.state_count):
+
                             q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                          Action(action=a_current),
                                                                                          MeanField(
@@ -150,6 +151,45 @@ class Expert(object):
                 a = np.random.choice(actions, 1, p=self.p_flow.val[t, s, :])[0]
                 data[i].states[t] = s
                 data[i].actions[t] = a
+        return data
+
+    def generate_trajectories_from_policy_flow(self, num_game_play: int, num_traj: int, current_policy_flow,
+                                               current_mean_field_flow, deterministic=True):
+        states = [i for i in range(self.env.state_count)]  # State space
+        actions = [i for i in range(self.env.action_count)]  # Action space
+        assert (current_mean_field_flow is not None) and (self.p_flow is not None)
+
+        data = [Trajectory(states=None, actions=None, horizon=self.horizon) for _ in range(num_game_play * num_traj)]
+
+        for i in range(num_game_play * num_traj):
+            # Sample the initial state (possibly from a given initial distribution)
+            # and we need to change this numpy.int to int
+            s = int(np.random.choice(states, 1, p=current_mean_field_flow.val[0, :])[0])
+            data[i].states[0] = s
+
+            for t in range(self.horizon):
+                # Sample action based on the current policy flow
+                # For we have all the 0 but 1, so that the argmax can get
+                # Still we need the int type
+                a = np.argmax(current_policy_flow.val[t, s, :]) if deterministic else \
+                    np.random.choice(actions, 1, p=current_policy_flow.val[t, s, :])[0]
+
+                a = int(a)
+
+                # print(type(a))
+                # print(type(int(a)))
+                # print(type(s))
+                data[i].actions[t] = a
+
+                # Compute the next state based on the current state and action
+                # Assuming the environment has a method `next_state` to compute this
+                if t < self.horizon - 1:  # Check to prevent indexing error on the last step
+                    s_next = self.env.dynamics(State(state=s), Action(action=a), MeanField(
+                        mean_field=current_mean_field_flow.val[
+                            t]))  # Update this method as per your environment dynamics
+                    data[i].states[t + 1] = s_next.val[0]
+                    s = int(s_next.val[0])  # Update current state to the next state
+
         return data
 
     # def generate_trajectories_MDP(self, num_game_play: int, num_traj: int):

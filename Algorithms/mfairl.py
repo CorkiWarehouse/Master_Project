@@ -114,12 +114,11 @@
 #             optimizer1.step()
 #             optimizer2.step()
 #
-#             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
+#             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())))
 #
 #
 #         self.reward_model = reward_model
 #         # torch.save(self.reward_model, './model_saved/mfirl_' + self.env.name + '_' + str(len(self.data)) + '.pt')
-
 
 import numpy as np
 import torch
@@ -133,23 +132,33 @@ MAX = 1000000  # maximum number of iterations
 MIN = 1e-32
 
 class MFAIRL(IRL):
+    '''
+    Max_epoch : Maximum number of training iterations.
+    learning_rate: Learning rate for the optimizer.
+    max_grad_norm: Threshold for gradient clipping to stabilize training by preventing exploding gradients.
+    num_of_units: Specifies the size of neural network layers in the reward model.
+    '''
+
     def train(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
-        reward_model = RewardModel(state_shape=self.env.state_shape,
-                                   action_shape=self.env.action_shape,
-                                   mf_shape=self.env.state_count,
-                                   num_of_units=num_of_units).to(self.device)
+        reward_model = RewardModel(
+            state_shape=self.env.state_shape,
+            action_shape=self.env.action_shape,
+            mf_shape=self.env.state_count,
+            num_of_units=num_of_units
+        ).to(self.device)
+
         optimizer1 = optim.Adam(reward_model.parameters(), lr=learning_rate)
 
-        # estimate mean field flow
+        # Estimate mean field flow
         est_expert_mf_flow = np.zeros((self.horizon, self.env.state_count))
         for sample in self.data:
             for t in range(self.horizon):
                 est_expert_mf_flow[t, int(sample.states[t])] += 1
         est_expert_mf_flow /= len(self.data)
 
-        # training starts
+        # Training loop
         for epoch in range(max_epoch):
-            # calculate rewards of each sample (demonstrated trajectories)
+            # Calculate rewards for each sample (demonstrated trajectories)
             rewards = []
             for sample in self.data:
                 reward_per_step = [
@@ -159,6 +168,8 @@ class MFAIRL(IRL):
                         torch.from_numpy(est_expert_mf_flow[t, :]).to(self.device, torch.float)
                     ) for t in range(self.horizon)
                 ]
+
+                # Sum of rewards over the trajectory
                 reward_per_sample = torch.sum(torch.cat(reward_per_step, dim=0).reshape((1, -1)))
                 rewards.append(reward_per_sample)
 
@@ -167,7 +178,7 @@ class MFAIRL(IRL):
 
             # Gradient descent
             optimizer1.zero_grad()
-            loss = -average_reward  # Maximizing average reward
+            loss = -average_reward # Maximizing average reward
             loss.backward()
             U.clip_grad_norm_(reward_model.parameters(), max_grad_norm)
             optimizer1.step()
@@ -175,5 +186,3 @@ class MFAIRL(IRL):
             print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())))
 
         self.reward_model = reward_model
-        # torch.save(self.reward_model, './model_saved/mfirl_' + self.env.name + '_' + str(len(self.data)) + '.pt')
-

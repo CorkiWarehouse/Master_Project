@@ -1,55 +1,69 @@
-def train_mean_field_dim_1_new(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
-    mean_field_model = MeanFieldModel(state_shape=self.env.state_shape, time_horizon=1, num_of_units=num_of_units).to(self.device)
-    optimizer1 = optim.Adam(mean_field_model.parameters(), lr=learning_rate)
+def recover_ermfne(self, expert_mf_flow) -> [MeanFieldFlow, PolicyFlow]:
+    assert self.reward_model is not None
+    mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+    p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    lambda_ = 10.0  # 惩罚项强度（根据需要调整）
 
-    mean_field_values = []
-    states = []
+    for _ in range(MAX):
+        p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+        q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
-    for t in range(self.horizon):
         for s in range(self.env.state_count):
-            states.append([s * self.env.position_unit, t * self.env.time_unit])
-            if t == 0:
-                # Convert the initial value to a tensor of shape [1] to match the other tensors
-                mean_field_values.append(torch.tensor([self.env.init_mf.val[s]], dtype=torch.float, device=self.device))
-            else:
-                x_onehot = torch.tensor(self.env.state_option[s], device=self.device, dtype=torch.float)
-                t_onehot = torch.tensor(t, device=self.device, dtype=torch.float)
-                x_last_onehot = torch.tensor(self.env.state_option[(s - 1) % self.env.state_count], device=self.device, dtype=torch.float)
-                t_last_onehot = torch.tensor((t - 1) % self.horizon, device=self.device, dtype=torch.float)
+            p_flow.val[self.horizon - 1, s, :] = (
+                np.array([1 / self.env.action_count for _ in range(self.env.action_count)]))
 
-                x_onehot.requires_grad_(True)
-                t_onehot.requires_grad_(True)
-                x_last_onehot.requires_grad_(True)
-                t_last_onehot.requires_grad_(True)
+        for t in reversed(range(0, self.horizon - 1)):
+            for s_current in range(0, self.env.state_count):
+                for a_current in range(0, self.env.action_count):
+                    original_reward = self.reward_model(
+                        torch.tensor(self.env.state_option[s_current]).to(self.device, torch.float),
+                        torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
+                        torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
+                    ).detach().cpu().numpy()
 
-                mean_field_last_x_t = mean_field_model(x_last_onehot, t_last_onehot)
-                mean_field_last_t = mean_field_model(x_onehot, t_last_onehot)
+                    divergence_penalty = self.compute_divergence_penalty(
+                        mf_flow.val[t],
+                        expert_mf_flow.val[t]
+                    )
 
-                last_policy = self.p_flow.val[t-1, :]
-                action_index_last_x_t = np.argmax(last_policy[int((s-1) % self.env.state_count)])
-                action_index_last_t = np.argmax(last_policy[s])
+                    q_values.val[t, s_current, a_current] += original_reward - lambda_ * divergence_penalty
 
-                velocity_last_t = np.linalg.norm(self.env.action_option[action_index_last_t])
-                velocity_last_x_t = np.linalg.norm(self.env.action_option[action_index_last_x_t])
+                    for s_next in range(0, self.env.state_count):
+                        trans_prob = self.env.trans_prob(
+                            State(state=s_current),
+                            Action(action=a_current),
+                            MeanField(mean_field=mf_flow.val[t])
+                        )[s_next]
 
-                # Ensure the result is a tensor of shape [1]
-                value = mean_field_last_t + mean_field_last_x_t * velocity_last_x_t - mean_field_last_t * velocity_last_t
-                mean_field_values.append(value.view(1))
+                        entropy_term = self.env.beta * np.sum(entr(p_flow.val[t + 1, s_next, :]))
+                        q_values.val[t, s_current, a_current] += trans_prob * entropy_term
 
-    # Stack all tensors into a single tensor
-    states_tensor = torch.tensor(states, dtype=torch.float, device=self.device)
-    mean_field_values_tensor = torch.stack(mean_field_values)
+                        for a_next in range(0, self.env.action_count):
+                            q_values.val[t, s_current, a_current] += (
+                                    trans_prob * p_flow.val[t + 1, s_next, a_next] * q_values.val[t + 1, s_next, a_next]
+                            )
 
-    for epoch in range(max_epoch * 10):
-        preds = torch.reshape(mean_field_model(states_tensor), (1, -1))
-        residual = (mean_field_values_tensor - preds).abs().mean()
-        optimizer1.zero_grad()
-        residual.backward()
-        torch.nn.utils.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
-        optimizer1.step()
+            for s in range(0, self.env.state_count):
+                partition = 0.0
+                for a in range(0, self.env.action_count):
+                    policy_numerator = np.exp(q_values.val[t, s, a] / self.env.beta)
+                    adjusted_numerator = policy_numerator * np.exp(-lambda_ * divergence_penalty)
+                    partition += adjusted_numerator
+                for a in range(0, self.env.action_count):
+                    p_flow.val[t, s, a] = adjusted_numerator / partition
 
-        print(f'Mean_Field: epoch: {epoch + 1}, loss: {residual.item():.4f}', end='\r')
-        self.logger.info(f'Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
+        mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+        mf_flow_next.val[0] = mf_flow.val[0, :]
+        for t in range(1, self.horizon):
+            mf = self.env.advance(Policy(policy=p_flow.val[t - 1]), MeanField(mean_field=mf_flow.val[t - 1]))
+            mf_flow_next.val[t] = mf.val
 
-    print()  # for better formatting of print output
-    self.mean_field_model = mean_field_model
+        divergence = self.compute_divergence_penalty(mf_flow_next.val, expert_mf_flow.val)
+        if divergence < MIN:
+            break
+        else:
+            mf_flow = mf_flow_next
+
+    self.mf_flow = mf_flow
+    self.p_flow = p_flow
+    return [mf_flow, p_flow]

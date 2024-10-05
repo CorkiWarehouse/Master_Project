@@ -30,6 +30,12 @@ class Env(Environment):
 
         self.position_unit = 1
 
+        self.time_unit = 1
+        self.position_unit = 1
+
+        self.init_mf = None
+        self.dim = 1
+
     def get_reward(self, state, action, mean_field):
         if int(action.val[0]) == 0:
             return Reward(reward=2 * mean_field.val[2] - mean_field.val[1])

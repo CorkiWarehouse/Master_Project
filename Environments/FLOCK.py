@@ -134,7 +134,7 @@ class Env(Environment):
         v_x_mean = v_x / self.state_count
         v_y_mean = v_y / self.state_count
 
-        inner = np.array([-v_x_mean + self.state_option[state.val[0]][2], -v_y_mean + self.state_option[state.val[0]][3]]) * mean_field.val[state.val[0]]
+        inner = np.array([-v_x_mean + self.state_option[state.val[0]][2], -v_y_mean + self.state_option[state.val[0]][3]]) # * mean_field.val[state.val[0]]
         f_value = -np.linalg.norm(inner, ord=1)**2
 
         # here we get the action part

@@ -6,6 +6,7 @@ Remainder value type:
     1. estimated_mean_field_flow : numpy.array()
 
 """
+import copy
 import logging
 import time
 
@@ -21,6 +22,8 @@ from Algorithms.myModels import MeanFieldModel, RewardModel, PolicyModel
 from core import Environment, State, Action, MeanField, MeanFieldFlow, PolicyFlow, Policy,IRL,Trajectory
 from Environments import CARS
 from Algorithms.expert_training import Expert
+
+from sklearn.model_selection import train_test_split
 
 import time
 
@@ -71,6 +74,9 @@ class PIIRL():
 
         self.policy_model = None
 
+        self.train_data = None
+        self.test_data = None
+
         self.expert = Expert(env=env, horizon=self.horizon)
 
         # Setup logging
@@ -116,17 +122,18 @@ class PIIRL():
                                    action_shape=self.env.action_count,
                                    mf_shape=self.env.state_count,
                                    num_of_units=num_of_units).to(self.device)
-        # Initialize the mean field model
-        mean_field_model = MeanFieldModel(
-            state_shape=self.env.state_shape,
-            time_horizon=1,
-            num_of_units=num_of_units
-        ).to(self.device)
+
+        # this is the nn for the mean field value
+        mean_field_model = MeanFieldModel(state_shape=self.env.state_shape,
+                                          # this is the special attribute for our model
+                                          # here is the time shape should be the 1
+                                          time_horizon=1,
+                                          num_of_units=num_of_units).to(self.device)
+
 
         optimizer_reward = optim.Adam(reward_model.parameters(), lr=learning_rate)
         optimizer_policy = optim.Adam(policy_model.parameters(), lr=learning_rate)
-        optimizer_mf = optim.Adam(mean_field_model.parameters(), lr=learning_rate, weight_decay=1e-5)
-
+        optimizer_meanfield = optim.Adam(mean_field_model.parameters(), lr=learning_rate,weight_decay=1e-4)
         '''
         Here is the init part 
             we need to initialize the policy  at first
@@ -150,6 +157,8 @@ class PIIRL():
 
         self.mf_flow.val = init_est_expert_mf_flow
 
+
+
         for epoch in range(max_epoch):
 
             start_time = time.time()
@@ -160,10 +169,7 @@ class PIIRL():
             
             2. we also need the new trajectory which is induced by current policy  
             '''
-            
 
-            # 1. we need sample the trajectory from our original policy
-            self.data_policy_theta = self.generate_trajectories_from_policy_flow(self.num_of_game_plays, self.num_traj, self.p_flow, self.mf_flow,True)
 
             # TODO This is the replace part for the
             # TODO and we store all the tensor value in it
@@ -193,11 +199,15 @@ class PIIRL():
             # change the new meanfield to our current
             self.mf_flow.val = estimated_mean_field_flow
 
+            # after get the init mf then we sample the trajectory
+            self.data_policy_theta = self.generate_trajectories_from_policy_flow(self.num_of_game_plays, self.num_traj,
+                                                                                 self.p_flow, self.mf_flow)
+
 
             # these 2 list is to store the D value from expert and policy
             value_per_sample_expert_data = []
-
             value_per_sample_policy_data = []
+
 
             '''
             First part of our D
@@ -206,6 +216,7 @@ class PIIRL():
             # here are the expert value
             for sample_expert in self.data_expert:
                 value_per_step = []
+                value_reward_exp = []
 
                 # At here we create the mean field flow for every time
                 for t in range(self.horizon):
@@ -219,11 +230,11 @@ class PIIRL():
 
 
                     # here we add the policy for this state and action
-                    down = torch.exp(reward_component +
-                                     self.p_flow.val[t,int(sample_expert.states[t]),int(sample_expert.actions[t])])
+                    down = torch.exp(reward_component) + self.p_flow.val[t,int(sample_expert.states[t]),int(sample_expert.actions[t])]
 
                     # here is the D for this (s_t,a_t)
                     value_per_step.append(up/down)
+
                 # here is the sum of the log D
                 # print(torch.cat(value_per_step, dim=0).reshape((1, -1)))
                 # print(torch.log(torch.cat(value_per_step, dim=0).reshape((1, -1))))
@@ -236,12 +247,14 @@ class PIIRL():
             estimated_expert_data = torch.mean(torch.cat(value_per_sample_expert_data,dim=0).reshape((1, -1)))
 
 
+
             '''
             Here is the second part 
                 which is induced from the policy trajectory
             '''
             for sample_policy_theta in self.data_policy_theta:
                 value_per_step = []
+                value_reward_exp = []
                 for t in range(self.horizon):
                     # here we give addition [] for torch.cat in the nn
                     reward_component = reward_model(
@@ -253,11 +266,11 @@ class PIIRL():
                     up = torch.exp(reward_component)
 
                     # here we add the policy for this state and action
-                    down = torch.exp(reward_component +
-                                     self.p_flow.val[t, int(sample_policy_theta.states[t]), int(sample_policy_theta.actions[t])])
+                    down = torch.exp(reward_component) + self.p_flow.val[t, int(sample_policy_theta.states[t]), int(sample_policy_theta.actions[t])]
 
                     # here is the 1-D for this (s_t,a_t)
                     value_per_step.append(1 - (up / down))
+                    value_reward_exp.append(reward_component)
 
                 # log(1-D) sum for policy_theta on this trajectory
                 value_per_sample_policy_data.append(torch.sum(torch.log(torch.cat(value_per_step, dim=0))).reshape((1, -1)))
@@ -268,21 +281,36 @@ class PIIRL():
             # then we need to use the gradient to maximum the sum of these 2
             # So we use it to minmize the - of the sum
 
+
             optimizer_reward.zero_grad()
             loss = -(estimated_expert_data + estimated_policy_data)
+            # loss = - (torch.mean(torch.cat([estimated_policy_data_reward,estimated_expert_reward],dim=0)))
             loss.backward()
             U.clip_grad_norm_(reward_model.parameters(), max_grad_norm)
             optimizer_reward.step()
 
+
+
             # TODO where should i do the policy update ?
             #  But how the trajectory change while we update the policy
             # here we update the policy
+            history_velocities = [[[] for _ in range(self.env.state_count)] for _ in
+                                  range(self.horizon)]
+
+
+
             for t in range(self.horizon-1, -1, -1):
                 # here we calculate the sum for the current
                 sum_current = []
+                best_loss = float('inf')
+                epoch_no_improve = 0
+
+                self.train_data, self.test_data = train_test_split(
+                    self.data_policy_theta, test_size=0.2, random_state=42
+                )
 
                 # here we use the formula
-                for sample in self.data_policy_theta:
+                for sample in self.train_data:
                     value_per_sampler = []
                     for current in range(t, self.horizon):
                         # at here we only update the previous
@@ -294,6 +322,7 @@ class PIIRL():
                                 torch.from_numpy(estimated_mean_field_flow[current, :]).to(self.device, torch.float)
                             ) - torch.log(torch.tensor(self.p_flow.val[current, int(sample.states[current]), int(sample.actions[current])]))
                         )
+
                     sum_current.append(torch.sum(torch.cat(value_per_sampler,dim=0)).reshape((1, -1)))
 
                 # this is the loss function
@@ -303,7 +332,7 @@ class PIIRL():
 
                 # train the policy model
                 optimizer_policy.zero_grad()
-                loss2 = -(estimated_update)
+                loss2 =-(estimated_update)
                 loss2.backward()
                 U.clip_grad_norm_(policy_model.parameters(), max_grad_norm)
                 optimizer_policy.step()
@@ -315,47 +344,48 @@ class PIIRL():
                         torch.from_numpy(estimated_mean_field_flow[t, :]).to(self.device, torch.float)
                     )
 
-                    tensor_list = new_policy.tolist()
-                    # print(tensor_list)
+                    action_exps = torch.exp(new_policy / self.env.beta)
+                    # Normalize and move to CPU before assigning to NumPy array
+                    self.p_flow.val[t, s] = (action_exps / torch.sum(action_exps)).detach().cpu().numpy()
 
-                    # here we update the policy flow
-                    self.p_flow.val[t,s] = tensor_list
+                # self.data_policy_theta = self.generate_trajectories_from_policy_flow(self.num_of_game_plays,
+                #                                                                      self.num_traj, self.p_flow,
+                #                                                                      self.mf_flow)
 
                 # FIXME We need to fill in the parameters
-
-                '''
-                    Here we need to update trajectory
-                    And we need to update the trajectory first, so that 
-                        our new mean_field model is the correct 
-                '''
-                self.data_policy_theta = self.generate_trajectories_from_policy_flow(self.num_of_game_plays, self.num_traj,self.p_flow,self.mf_flow)
-
-
-
                 # we also need to update the meanfield
                 # and we need to judge if it is more than 2 dim
                 if self.env.dim == 1:
-                    self.train_mean_field_dim_1_new(max_epoch, learning_rate, max_grad_norm, num_of_units, mean_field_model, optimizer_mf)
+                    self.train_mean_field_dim_1_new(max_epoch, learning_rate, max_grad_norm, num_of_units,
+                                                    history_velocities,mean_field_model,optimizer_meanfield,t,epoch_no_improve,best_loss)
                 elif self.env.dim == 2:
-                    self.train_mean_field_dim_2(max_epoch, learning_rate, max_grad_norm, num_of_units)
+                    self.train_mean_field_dim_2_new(max_epoch, learning_rate, max_grad_norm, num_of_units,
+                                                    history_velocities,mean_field_model,optimizer_meanfield,t)
 
+                # # Evaluate on the test dataset
+                # test_loss = self.evaluate_mean_field_model(mean_field_model, history_velocities, t)
+                # print(f'Epoch {epoch}, Test Loss: {test_loss:.4f}')
 
                 # here is the code which we used to update the mean field value
-                for current in range(t, self.horizon):
-                    for s in range(self.env.state_count):
-                        new_mean_field = self.mean_field_model(torch.tensor(self.env.state_option[s]).to(self.device, torch.float),
-                                                               torch.tensor(t).to(self.device, torch.float)
-                                                               )
 
-                        estimated_mean_field_flow[t,s] = new_mean_field
+                for s in range(self.env.state_count):
+                    new_mean_field = self.mean_field_model(
+                        torch.tensor(self.env.state_option[s]).to(self.device, torch.float),
+                        torch.tensor(t).to(self.device, torch.float)
+                    )
 
-                    total = sum(estimated_mean_field_flow[t, :])
-                    if total != 0:
-                        estimated_mean_field_flow[t, :] /= total
-                    else:
-                        raise ValueError("Sum of values is zero, cannot normalize")
+                    estimated_mean_field_flow[t, s] = new_mean_field
+
+                total = sum(estimated_mean_field_flow[t, :])
+                if total != 0:
+                    estimated_mean_field_flow[t, :] /= total
+                else:
+                    raise ValueError("Sum of values is zero, cannot normalize")
 
                 self.mf_flow.val = estimated_mean_field_flow
+
+                # we will use the new tra
+                self.data_policy_theta = self.generate_trajectories_from_policy_flow(self.num_of_game_plays,self.num_traj,self.p_flow,self.mf_flow)
 
 
 
@@ -364,9 +394,9 @@ class PIIRL():
             epoch_duration = end_time - start_time
 
             print(f"Time taken for one epoch: {epoch_duration:.4f} seconds")
-            print('=MFIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())), end='\r')
+            print('=PIIRL: epoch:{}'.format(epoch) + ', loss:{}'.format(str(loss.detach().cpu().numpy())))
             # print(epoch)
-            self.logger.info('=MFIRL: epoch:{}, loss:{}'.format(epoch, str(loss.detach().cpu().numpy())))
+            # self.logger.info('=PIIRL: epoch:{}, loss:{}'.format(epoch, str(loss.detach().cpu().numpy())))
 
         # send the most optimal back
         # this is the last
@@ -383,44 +413,105 @@ class PIIRL():
         but the time should still be last 
     '''
 
-    def train_mean_field_dim_1(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
-        # this is the nn for the mean field value
-        mean_field_model = MeanFieldModel(state_shape=self.env.state_shape,
-                                          # this is the special attribute for our model
-                                          # here is the time shape should be the 1
-                                          time_horizon=1,
-                                          num_of_units=num_of_units).to(self.device)
+    def train_mean_field_dim_1_new(self, max_epoch: int, learning_rate: float, max_grad_norm: float,
+                                   num_of_units: int, history_velocities,mean_field_model, optimizer1, start_time,epoch_no_improve,best_loss):
+        mean_field_model.train()
+        patience = (len(self.data_policy_theta) / 2) if (len(self.data_policy_theta) / 2) < 100 else 100
+        best_model = copy.deepcopy(mean_field_model.state_dict())
+        for sample in self.train_data:
+            # Initialize a list to store historical velocities
 
-        # this is the optimizer which is the actual runner
-        optimizer1 = optim.Adam(mean_field_model.parameters(), lr=learning_rate)
+            loss_total = []
 
-        # then we start our nn for the mean field
-        for epoch in range(max_epoch):
+            for t in range(start_time, self.horizon):
+                x_onehot = torch.tensor([self.env.state_option[int(sample.states[t])]]).to(self.device, torch.float)
+                t_onehot = torch.tensor([t]).to(self.device, torch.float)
+                x_last_onehot = torch.tensor(
+                    [self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]]).to(self.device,
+                                                                                                  torch.float)
+                t_next_onehot = torch.tensor([(t + 1) % self.horizon]).to(self.device, torch.float)
 
-            loss_total_mean = []
+                # Set requires_grad to True for tensors where gradients are needed
+                x_onehot.requires_grad = True
+                t_onehot.requires_grad = True
 
-            for sample in self.data_policy_theta:
-                # get the mean field for this time and states
-                # This will give us all the mean field for this sample through our model
-                '''
-                For we only need the x-position and t-time for our model 
-                '''
+                # Compute mean fields for current, next time step, and last x position
+                mean_field_now = mean_field_model(x_onehot, t_onehot)
+                mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
+                mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
 
-                # here is used to store all the loss on this trajectory
-                # for we only update the policy on the whole trajectory
-
-                # loss_total = []
-
-                # Initialize a list to store losses for each trajectory in the sample
+                # Get the policy at time t for the current state
+                current_policy = self.p_flow.val[t, :]
 
 
-                for t in range(self.horizon):
-                    x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
-                    t_onehot = torch.tensor(t).to(self.device, torch.float)
+                # Compute expected velocity at time t
+                velocity_now = self.env.action_option[(np.argmax(current_policy[int(sample.states[t])]))]
+                action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
+
+                history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)].append(self.env.action_option[action_index_last])
+
+                # Compute mean of historical velocities
+                if history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)]:
+                    mean_velocity = np.mean(history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)])
+                    # Find the closest value in self.env.action_option to mean_velocity
+                    velocity_last_x = min(self.env.action_option, key=lambda x: abs(x - mean_velocity))
+
+                # Compute the custom loss using the given formula
+                left = (mean_field_next_time - mean_field_now) / self.env.time_unit
+                right = ((mean_field_now * velocity_now) - (
+                            mean_field_last_x * velocity_last_x)) / self.env.position_unit
+                loss = (left + right).abs()
+                loss_total.append(loss)
+
+
+
+
+            # Aggregate losses from the trajectory and perform a single optimization step per sample
+            residual = torch.mean(torch.cat((loss_total), dim=0).reshape((1, -1)))
+            optimizer1.zero_grad()  # Zero gradients before backward pass
+            residual.backward()  # Backpropagation
+            U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)  # Gradient clipping
+            optimizer1.step()  # Optimizer step
+
+
+            # Log the loss
+            # print('=Mean_Field: , loss:{}'.format(str(residual.detach().cpu().numpy())), end='\r')
+
+            val_loss = self.evaluate_mean_field_model(mean_field_model, history_velocities, start_time)
+            print(f'Epoch , Training Loss: {residual.item():.6f}, Validation Loss: {val_loss:.6f}', end='\r')
+
+            # Early stopping logic
+            if val_loss < best_loss:
+                best_loss = val_loss
+                epochs_no_improve = 0
+                best_model = copy.deepcopy(mean_field_model.state_dict())
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= patience:
+                print('Early stopping triggered!',end='\r')
+                break
+
+            # self.logger.info(f'=Mean_Field: , Sample Loss: {residual.item():.4f}')
+
+            #print()  # for better formatting of print output
+
+        mean_field_model.load_state_dict(best_model)
+        self.mean_field_model = mean_field_model
+
+    def evaluate_mean_field_model(self, mean_field_model, history_velocities, start_time):
+        mean_field_model.eval()  # Set model to evaluation mode
+        loss_total_test = []
+
+        with torch.no_grad():
+            for sample in self.test_data:
+                for t in range(start_time, self.horizon):
+                    x_onehot = torch.tensor([self.env.state_option[int(sample.states[t])]]).to(self.device, torch.float)
+                    t_onehot = torch.tensor([t]).to(self.device, torch.float)
                     x_last_onehot = torch.tensor(
-                        self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device,
-                                                                                                    torch.float)
-                    t_next_onehot = torch.tensor((t + 1) % self.horizon).to(self.device, torch.float)
+                        [self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]]).to(self.device,
+                                                                                                      torch.float)
+                    t_next_onehot = torch.tensor([(t + 1) % self.horizon]).to(self.device, torch.float)
 
                     # Set requires_grad to True for tensors where gradients are needed
                     x_onehot.requires_grad = True
@@ -431,332 +522,330 @@ class PIIRL():
                     mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
                     mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
 
-                    # then also need to record the policy
-                    # this will give us the pi^theta_t
-                    # TODO we get the probability of actions in this time
-                    # TODO But for we are deterministic, so it will be all 0 but 1 for one action
-                    # TODO we assume that it has been one_hot well
+                    # Get the policy at time t for the current state
                     current_policy = self.p_flow.val[t, :]
 
-                    # then we need to get the policy which is the velocity
-                    # And we use the mean velocity to represent
-                    # policy is s[a[]] like this
-                    # and we have every probability for every action
-                    '''
-                        we need the max one 
-                    '''
-                    action_index_now = np.argmax(current_policy[int(sample.states[t])])
+                    # Compute expected velocity at time t
+                    velocity_now = self.env.action_option[(np.argmax(current_policy[int(sample.states[t])]))]
                     action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
 
-                    # here for we may have many dimensions' v
-                    # we need the normalize for this v
+                    history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)].append(
+                        self.env.action_option[action_index_last])
 
-                    # if self.env.name == 'FLOCK':
-                    #     velocity_now = np.linalg.norm(self.env.state_option[int(sample.states[t])][2:])
-                    #     velocity_last_x = np.linalg.norm(self.env.state_option[int((sample.states[t] - 1)%self.env.state_count)][2:])
-                    #
-                    # else:
-
-                    # Calculate velocity for current and last x position
-                    velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
-                    velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
-
-                    # time do not need one-hot
-
-                    # then we need to train this one
-                    # Compute gradients with autograd
-                    # mu_t = torch.autograd.grad(mean_field_now, torch.tensor([t], dtype=torch.float32, requires_grad=True),
-                    #                            grad_outputs=torch.ones_like(mean_field_now),
-                    #                            create_graph=True)[0]
-                    #
-                    # # mu * policy and its gradient
-                    # product = mean_field_now * velocity_now
-                    # product_x = torch.autograd.grad(product, torch.tensor([sample.states[t]], dtype=torch.float32, requires_grad=True),
-                    #                     grad_outputs=torch.ones_like(product),
-                    #                     create_graph=True)[0]
-
-                    '''
-                    Here we change our residual calculation process:
-                        we choose use the delt_t and delt_x to get the residual
-                        For we can not add 2 value with different dimension 
-
-                    And we let the random step size fai = 1 
-                    '''
-
+                    # Compute mean of historical velocities
+                    if history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)]:
+                        mean_velocity = np.mean(
+                            history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)])
+                        # Find the closest value in self.env.action_option to mean_velocity
+                        velocity_last_x = min(self.env.action_option, key=lambda x: abs(x - mean_velocity))
 
                     # Compute the custom loss using the given formula
                     left = (mean_field_next_time - mean_field_now) / self.env.time_unit
                     right = ((mean_field_now * velocity_now) - (
-                                mean_field_last_x * velocity_last_x)) / self.env.position_unit
+                            mean_field_last_x * velocity_last_x)) / self.env.position_unit
                     loss = (left + right).abs()
-                    loss_total_mean.append(loss)
+                    loss_total_test.append(loss)
+
+            # Aggregate losses from the test dataset
+            residual_test = torch.mean(torch.cat((loss_total_test), dim=0).reshape((1, -1)))
+
+        mean_field_model.train()
+        avg_val_loss = residual_test
+
+        # Return the test loss value
+        return avg_val_loss
+
+
+
+    def train_mean_field_dim_2_new(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int,history_velocities,mean_field_model,optimizer1, start_time):
+
+
+        for sample in self.data_policy_theta:
+            # get the mean field for this time and states
+            # This will give us all the mean field for this sample through our model
+            '''
+            For we only need the x-position and t-time for our model 
+            '''
+
+            # here is used to store all the loss on this trajectory
+            # for we only update the policy on the whole trajectory
+
+            loss_total = []
+
+            # Initialize a list to store losses for each trajectory in the sample
+
+
+            for t in range(self.horizon):
+
+                # then also need to record the policy
+                # this will give us the pi^theta_t
+                # TODO we get the probability of actions in this time
+                # TODO But for we are deterministic, so it will be all 0 but 1 for one action
+                # TODO we assume that it has been one_hot well
+                current_policy = self.p_flow.val[t, :]
+
+                x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
+                t_onehot = torch.tensor(t).to(self.device, torch.float)
+
+                # x_last could be the around
+                # here we need to get all the neighbours around it
+
+                # x_last_onehot = torch.tensor(
+                #     self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device,
+                #                                                                                 torch.float)
+
+                neighbours = self.env.get_neighbors(int(sample.states[t]))
+                x_last_around = []
+                action_index_last = []
+                for neighbour in neighbours:
+                    x_last_around.append(
+                        torch.tensor(
+                                self.env.state_option[int(neighbour)]).to(self.device,torch.float))
+                    action_index_last.append(
+                        np.argmax(current_policy[int((neighbour) % self.env.state_count)])
+                    )
+
+                t_next_onehot = torch.tensor((t + 1) % self.horizon).to(self.device, torch.float)
+
+                # Set requires_grad to True for tensors where gradients are needed
+                # x_onehot.requires_grad = True
+                # t_onehot.requires_grad = True
+
+                # Compute mean fields for current, next time step, and last x position
+                mean_field_now = mean_field_model(x_onehot, t_onehot)
+                mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
+
+                # mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
+
+                # here we get all the last mean field
+                mean_field_last_x = []
+                for x_last in x_last_around:
+                    mean_field_last_x.append(
+                        mean_field_model(x_last, t_onehot)
+                    )
+                mean_field_last_x = torch.mean(torch.stack(mean_field_last_x), dim=0)
+
+                # then we need to get the policy which is the velocity
+                # And we use the mean velocity to represent
+                # policy is s[a[]] like this
+                # and we have every probability for every action
+                '''
+                    we need the max one 
+                '''
+                action_index_now = np.argmax(current_policy[int(sample.states[t])])
+
+                # here like the above x_last we still need to get the action last
+
+                # action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
+
+
+                # Calculate velocity for current and last x position
+                velocity_now =  self.encode_length_and_angle(self.env.action_option[action_index_now])
+
+                velocity_last_x = []
+                for action_index in action_index_last:
+                    velocity_last_x.append( self.encode_length_and_angle(self.env.action_option[action_index]))
+                velocity_last_x =  sum(velocity_last_x) / len(velocity_last_x)
+
+                history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)].append(velocity_last_x)
+
+                # Compute mean of historical velocities
+                if history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)]:
+                    mean_velocity = np.mean(history_velocities[t][int((sample.states[t] - 1) % self.env.state_count)])
+                    # Find the closest value in self.env.action_option to mean_velocity
+                    velocity_last_x =  self.encode_length_and_angle(min(
+                        self.env.action_option,
+                        key=lambda x: abs( self.encode_length_and_angle(x) - mean_velocity)
+                    ))
+                '''
+                Here we change our residual calculation process:
+                    we choose use the delt_t and delt_x to get the residual
+                    For we can not add 2 value with different dimension 
+
+                And we let the random step size fai = 1 
+                '''
+
+
+                # Compute the custom loss using the given formula
+                left = (mean_field_next_time - mean_field_now) / self.env.time_unit
+                right = ((mean_field_now * velocity_now) - (
+                            mean_field_last_x * velocity_last_x)) / self.env.position_unit
+                loss = (left + right).abs()
+                loss_total.append(loss)
+
+                # Store velocity_now for the next iteration
+                velocity_last_prev = velocity_last_x
+
+
 
             # Aggregate losses from the trajectory and perform a single optimization step per sample
-            residual = torch.mean(torch.cat((loss_total_mean),dim=0).reshape((1, -1)))
+            residual = torch.mean(torch.cat((loss_total),dim=0).reshape((1, -1)))
             optimizer1.zero_grad()  # Zero gradients before backward pass
             residual.backward()  # Backpropagation
             U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)  # Gradient clipping
             optimizer1.step()  # Optimizer step
 
             # Log the loss
-            print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
+            print('=Mean_Field: epoch:{}' + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
                   end='\r')
-            self.logger.info(f'=Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
+            # self.logger.info(f'=Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
 
             print()  # for better formatting of print output
 
 
         self.mean_field_model = mean_field_model
 
+    def encode_length_and_angle(self, velocity):
+        # 计算模
+        r = np.linalg.norm(velocity)
+        # 计算角度
+        theta = np.arctan2(velocity[1], velocity[0])
+        # 将角度映射到 [-1, 1] 并计算编码值
+        encoded_value = r * np.cos(theta)
+        return encoded_value
 
-    def train_mean_field_dim_2(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int):
-        # this is the nn for the mean field value
-        mean_field_model = MeanFieldModel(state_shape=self.env.state_shape,
-                                          # this is the special attribute for our model
-                                          # here is the time shape should be the 1
-                                          time_horizon=1,
-                                          num_of_units=num_of_units).to(self.device)
+    # 示例
+
+    def train_mean_field_dim_2(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int,mean_field_model):
 
         # this is the optimizer which is the actual runner
         optimizer1 = optim.Adam(mean_field_model.parameters(), lr=learning_rate)
 
-        # then we start our nn for the mean field
-        for epoch in range(max_epoch):
 
-            loss_total_mean = []
 
-            for sample in self.data_policy_theta:
-                # get the mean field for this time and states
-                # This will give us all the mean field for this sample through our model
+        for sample in self.data_policy_theta:
+            # get the mean field for this time and states
+            # This will give us all the mean field for this sample through our model
+            '''
+            For we only need the x-position and t-time for our model 
+            '''
+
+            # here is used to store all the loss on this trajectory
+            # for we only update the policy on the whole trajectory
+
+            loss_total = []
+
+            # Initialize a list to store losses for each trajectory in the sample
+
+
+            for t in range(self.horizon):
+
+                # then also need to record the policy
+                # this will give us the pi^theta_t
+                # TODO we get the probability of actions in this time
+                # TODO But for we are deterministic, so it will be all 0 but 1 for one action
+                # TODO we assume that it has been one_hot well
+                current_policy = self.p_flow.val[t, :]
+
+                x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
+                t_onehot = torch.tensor(t).to(self.device, torch.float)
+
+                # x_last could be the around
+                # here we need to get all the neighbours around it
+
+                # x_last_onehot = torch.tensor(
+                #     self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device,
+                #                                                                                 torch.float)
+
+                neighbours = self.env.get_neighbors(int(sample.states[t]))
+                x_last_around = []
+                action_index_last = []
+                for neighbour in neighbours:
+                    x_last_around.append(
+                        torch.tensor(
+                                self.env.state_option[int(neighbour)]).to(self.device,torch.float))
+                    action_index_last.append(
+                        np.argmax(current_policy[int((neighbour) % self.env.state_count)])
+                    )
+
+                t_next_onehot = torch.tensor((t + 1) % self.horizon).to(self.device, torch.float)
+
+                # Set requires_grad to True for tensors where gradients are needed
+                # x_onehot.requires_grad = True
+                # t_onehot.requires_grad = True
+
+                # Compute mean fields for current, next time step, and last x position
+                mean_field_now = mean_field_model(x_onehot, t_onehot)
+                mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
+
+                # mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
+
+                # here we get all the last mean field
+                mean_field_last_x = []
+                for x_last in x_last_around:
+                    mean_field_last_x.append(
+                        mean_field_model(x_last, t_onehot)
+                    )
+                mean_field_last_x = torch.mean(torch.stack(mean_field_last_x), dim=0)
+
+                # then we need to get the policy which is the velocity
+                # And we use the mean velocity to represent
+                # policy is s[a[]] like this
+                # and we have every probability for every action
                 '''
-                For we only need the x-position and t-time for our model 
+                    we need the max one 
+                '''
+                action_index_now = np.argmax(current_policy[int(sample.states[t])])
+
+                # here like the above x_last we still need to get the action last
+
+                # action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
+
+
+                # Calculate velocity for current and last x position
+                velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
+
+                velocity_last_x = []
+                for action_index in action_index_last:
+                    velocity_last_x.append(np.linalg.norm(self.env.action_option[action_index]))
+                velocity_last_x =  sum(velocity_last_x) / len(velocity_last_x)
+
+                # velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
+
+                # time do not need one-hot
+
+                # then we need to train this one
+                # Compute gradients with autograd
+                # mu_t = torch.autograd.grad(mean_field_now, torch.tensor([t], dtype=torch.float32, requires_grad=True),
+                #                            grad_outputs=torch.ones_like(mean_field_now),
+                #                            create_graph=True)[0]
+                #
+                # # mu * policy and its gradient
+                # product = mean_field_now * velocity_now
+                # product_x = torch.autograd.grad(product, torch.tensor([sample.states[t]], dtype=torch.float32, requires_grad=True),
+                #                     grad_outputs=torch.ones_like(product),
+                #                     create_graph=True)[0]
+
+                '''
+                Here we change our residual calculation process:
+                    we choose use the delt_t and delt_x to get the residual
+                    For we can not add 2 value with different dimension 
+
+                And we let the random step size fai = 1 
                 '''
 
-                # here is used to store all the loss on this trajectory
-                # for we only update the policy on the whole trajectory
 
-                # loss_total = []
-
-                # Initialize a list to store losses for each trajectory in the sample
-
-
-                for t in range(self.horizon):
-
-                    # then also need to record the policy
-                    # this will give us the pi^theta_t
-                    # TODO we get the probability of actions in this time
-                    # TODO But for we are deterministic, so it will be all 0 but 1 for one action
-                    # TODO we assume that it has been one_hot well
-                    current_policy = self.p_flow.val[t, :]
-
-                    x_onehot = torch.tensor(self.env.state_option[int(sample.states[t])]).to(self.device, torch.float)
-                    t_onehot = torch.tensor(t).to(self.device, torch.float)
-
-                    # x_last could be the around
-                    # here we need to get all the neighbours around it
-
-                    # x_last_onehot = torch.tensor(
-                    #     self.env.state_option[int(sample.states[t] - 1) % self.env.state_count]).to(self.device,
-                    #                                                                                 torch.float)
-
-                    neighbours = self.env.get_neighbors(int(sample.states[t]))
-                    x_last_around = []
-                    action_index_last = []
-                    for neighbour in neighbours:
-                        x_last_around.append(
-                            torch.tensor(
-                                    self.env.state_option[int(neighbour)]).to(self.device,torch.float))
-                        action_index_last.append(
-                            np.argmax(current_policy[int((neighbour) % self.env.state_count)])
-                        )
-
-                    t_next_onehot = torch.tensor((t + 1) % self.horizon).to(self.device, torch.float)
-
-                    # Set requires_grad to True for tensors where gradients are needed
-                    # x_onehot.requires_grad = True
-                    # t_onehot.requires_grad = True
-
-                    # Compute mean fields for current, next time step, and last x position
-                    mean_field_now = mean_field_model(x_onehot, t_onehot)
-                    mean_field_next_time = mean_field_model(x_onehot, t_next_onehot)
-
-                    # mean_field_last_x = mean_field_model(x_last_onehot, t_onehot)
-
-                    # here we get all the last mean field
-                    mean_field_last_x = []
-                    for x_last in x_last_around:
-                        mean_field_last_x.append(
-                            mean_field_model(x_last, t_onehot)
-                        )
-                    mean_field_last_x = torch.mean(torch.stack(mean_field_last_x), dim=0)
-
-                    # then we need to get the policy which is the velocity
-                    # And we use the mean velocity to represent
-                    # policy is s[a[]] like this
-                    # and we have every probability for every action
-                    '''
-                        we need the max one 
-                    '''
-                    action_index_now = np.argmax(current_policy[int(sample.states[t])])
-
-                    # here like the above x_last we still need to get the action last
-
-                    # action_index_last = np.argmax(current_policy[int((sample.states[t] - 1) % self.env.state_count)])
-
-
-                    # Calculate velocity for current and last x position
-                    velocity_now = np.linalg.norm(self.env.action_option[action_index_now])
-
-                    velocity_last_x = []
-                    for action_index in action_index_last:
-                        velocity_last_x.append(np.linalg.norm(self.env.action_option[action_index]))
-                    velocity_last_x =  sum(velocity_last_x) / len(velocity_last_x)
-
-                    # velocity_last_x = np.linalg.norm(self.env.action_option[action_index_last])
-
-                    # time do not need one-hot
-
-                    # then we need to train this one
-                    # Compute gradients with autograd
-                    # mu_t = torch.autograd.grad(mean_field_now, torch.tensor([t], dtype=torch.float32, requires_grad=True),
-                    #                            grad_outputs=torch.ones_like(mean_field_now),
-                    #                            create_graph=True)[0]
-                    #
-                    # # mu * policy and its gradient
-                    # product = mean_field_now * velocity_now
-                    # product_x = torch.autograd.grad(product, torch.tensor([sample.states[t]], dtype=torch.float32, requires_grad=True),
-                    #                     grad_outputs=torch.ones_like(product),
-                    #                     create_graph=True)[0]
-
-                    '''
-                    Here we change our residual calculation process:
-                        we choose use the delt_t and delt_x to get the residual
-                        For we can not add 2 value with different dimension 
-
-                    And we let the random step size fai = 1 
-                    '''
-
-
-                    # Compute the custom loss using the given formula
-                    left = (mean_field_next_time - mean_field_now) / self.env.time_unit
-                    right = ((mean_field_now * velocity_now) - (
-                                mean_field_last_x * velocity_last_x)) / self.env.position_unit
-                    loss = (left + right).abs()
-                    loss_total_mean.append(loss)
+                # Compute the custom loss using the given formula
+                left = (mean_field_next_time - mean_field_now) / self.env.time_unit
+                right = ((mean_field_now * velocity_now) - (
+                            mean_field_last_x * velocity_last_x)) / self.env.position_unit
+                loss = (left + right).abs()
+                loss_total.append(loss)
 
             # Aggregate losses from the trajectory and perform a single optimization step per sample
-            residual = torch.mean(torch.cat((loss_total_mean),dim=0).reshape((1, -1)))
+            residual = torch.mean(torch.cat((loss_total),dim=0).reshape((1, -1)))
             optimizer1.zero_grad()  # Zero gradients before backward pass
             residual.backward()  # Backpropagation
             U.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)  # Gradient clipping
             optimizer1.step()  # Optimizer step
 
             # Log the loss
-            print('=Mean_Field: epoch:{}'.format(epoch) + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
+            print('=Mean_Field: epoch:{}' + ', loss:{}'.format(str(residual.detach().cpu().numpy())),
                   end='\r')
-            self.logger.info(f'=Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
+            # self.logger.info(f'=Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
 
             print()  # for better formatting of print output
 
-
-        self.mean_field_model = mean_field_model
-
-
-    def train_mean_field_dim_1_new(self, max_epoch: int, learning_rate: float, max_grad_norm: float, num_of_units: int,
-                                   mean_field_model, optimizer1):
-        optimizer1 = optim.Adam(mean_field_model.parameters(), lr=learning_rate, weight_decay=1e-5)
-
-        # Prepare the states and times tensors
-        states_all = []
-        times_all = []
-
-        for trajectory in self.data_policy_theta:
-            states = trajectory.states
-            num_steps = len(states)
-            time_steps = np.arange(num_steps)
-
-            # Extend states and times lists
-            states_all.extend(states * self.env.time_unit)
-            times_all.extend(time_steps * self.env.position_unit)
-
-        # Convert lists to tensors
-        states_tensor = torch.tensor(states_all, dtype=torch.float, device=self.device).view(-1, 1)
-        times_tensor = torch.tensor(times_all, dtype=torch.float, device=self.device).view(-1, 1)
-
-        # Compute indices
-        s_indices = (states_tensor.squeeze() / self.env.position_unit).long()
-        t_indices = (times_tensor.squeeze() / self.env.time_unit).long()
-
-        # Create masks
-        t_zero_mask = (t_indices == 0)
-        t_nonzero_mask = ~t_zero_mask
-
-        # Convert state_option to a tensor
-        state_option_tensor = torch.tensor(self.env.state_option, dtype=torch.float, device=self.device)
-
-        for epoch in range(max_epoch):
-            optimizer1.zero_grad()
-
-            # Initialize mean_field_values tensor
-            mean_field_values = torch.zeros(states_tensor.size(0), device=self.device, dtype=torch.float)
-
-            # Handle t = 0 cases
-            mean_field_values[t_zero_mask] = torch.tensor(
-                self.env.init_mf.val, device=self.device, dtype=torch.float
-            )[s_indices[t_zero_mask]]
-
-            # Handle t > 0 cases
-            if t_nonzero_mask.any():
-                # Prepare inputs for mean_field_model
-                x_onehot = state_option_tensor[s_indices[t_nonzero_mask]]
-                t_onehot = (t_indices[t_nonzero_mask] - 1).float().unsqueeze(1)
-
-                x_last_onehot = state_option_tensor[(s_indices[t_nonzero_mask] - 1) % self.env.state_count]
-                t_last_onehot = (t_indices[t_nonzero_mask] - 1).float().unsqueeze(1)
-
-                # Compute mean fields
-                mean_field_last_x_t = mean_field_model(x_last_onehot, t_last_onehot).squeeze()
-                mean_field_last_t = mean_field_model(x_onehot, t_onehot).squeeze()
-
-                # Get last policies
-                last_policy_indices = (t_indices[t_nonzero_mask] - 1).cpu().numpy()
-                last_policy = torch.tensor(
-                    self.p_flow.val[last_policy_indices],
-                    device=self.device, dtype=torch.float
-                )
-
-                # Get action indices
-                action_indices_last_t = torch.argmax(last_policy, dim=1)[s_indices[t_nonzero_mask]]
-                action_indices_last_x_t = torch.argmax(last_policy, dim=1)[
-                    (s_indices[t_nonzero_mask] - 1) % self.env.state_count]
-
-                # Compute velocities
-                action_option_tensor = torch.tensor(self.env.action_option, device=self.device)
-                velocity_last_t = torch.norm(action_option_tensor[action_indices_last_t], dim=1)
-                velocity_last_x_t = torch.norm(action_option_tensor[action_indices_last_x_t], dim=1)
-
-                # Compute mean field values for t > 0
-                mean_field_values[t_nonzero_mask] = (
-                        mean_field_last_t +
-                        mean_field_last_x_t * velocity_last_x_t -
-                        mean_field_last_t * velocity_last_t
-                )
-
-            # Compute predictions
-            preds = mean_field_model(states_tensor, times_tensor).squeeze()
-
-            # Compute residual loss
-            residual = (mean_field_values - preds).abs().mean()
-
-            # Backpropagation and optimization
-            residual.backward()
-            torch.nn.utils.clip_grad_norm_(mean_field_model.parameters(), max_grad_norm)
-            optimizer1.step()
-
-            # Logging
-            print(f'Mean_Field: epoch: {epoch}, loss: {residual.item():.4f}', end='\r')
-            self.logger.info(f'Mean_Field: Epoch {epoch + 1}, Sample Loss: {residual.item():.4f}')
-            print()
 
         self.mean_field_model = mean_field_model
 
@@ -765,6 +854,8 @@ class PIIRL():
         trajectory under current mean field and policy 
         we need to use this method whenever we update the policy
     '''
+
+
     def generate_trajectories_from_policy_flow(self, num_game_play: int, num_traj: int, current_policy_flow,
                                                current_mean_field_flow, deterministic=True):
         states = [i for i in range(self.env.state_count)]  # State space
@@ -784,7 +875,7 @@ class PIIRL():
                 # For we have all the 0 but 1, so that the argmax can get
                 # Still we need the int type
                 a = np.argmax(current_policy_flow.val[t, s, :]) if deterministic else \
-                np.random.choice(actions, 1, p=current_policy_flow.val[t, s, :])[0]
+                    np.random.choice(actions, 1, p=current_policy_flow.val[t, s, :])[0]
 
                 a = int(a)
 
@@ -796,11 +887,38 @@ class PIIRL():
                 # Compute the next state based on the current state and action
                 # Assuming the environment has a method `next_state` to compute this
                 if t < self.horizon - 1:  # Check to prevent indexing error on the last step
-                    s_next = self.env.dynamics(State(state=s), Action(action=a), MeanField(mean_field=current_mean_field_flow.val[t]))  # Update this method as per your environment dynamics
+                    s_next = self.env.dynamics(State(state=s), Action(action=a), MeanField(
+                        mean_field=current_mean_field_flow.val[
+                            t]))  # Update this method as per your environment dynamics
                     data[i].states[t + 1] = s_next.val[0]
                     s = int(s_next.val[0])  # Update current state to the next state
 
         return data
+
+    def generate_trajectories(self, num_game_play: int, num_traj: int):
+        states = [i for i in range(self.env.state_count)]
+        actions = [i for i in range(self.env.action_count)]
+        assert (self.mf_flow is not None) and (self.p_flow is not None)
+        data = [Trajectory(states=None, actions=None, horizon=self.horizon) for _ in range(num_game_play * num_traj)]
+        for i in range(num_game_play * num_traj):
+            for t in range(self.horizon):
+                #print(self.mf_flow.val[t, :])
+                '''
+                According to the mean_field, we select the state randomly from states
+                '''
+                # FIXME : Here we let the output from the numpy to the int value
+                # FIXME: original : s = np.random.choice(states, 1, p=self.mf_flow.val[t, :])
+                s = np.random.choice(states, 1, p=self.mf_flow.val[t, :])[0]
+                #print(self.p_flow.val[t, s, :][0])
+
+                # FIXME We change the code here from p=self.p_flow.val[t, s, :][0]
+                # FIXME to p=self.p_flow.val[t, s, :])[0] PUT THE [0] out side
+                self.p_flow.val[t, s, :] = self.p_flow.val[t, s, :] / (sum(self.p_flow.val[t, s, :]))
+                a = np.random.choice(actions, 1, p=self.p_flow.val[t, s, :])[0]
+                data[i].states[t] = s
+                data[i].actions[t] = a
+        return data
+
 
     def recover_ermfne(self) -> [MeanFieldFlow, PolicyFlow]:
         assert self.reward_model is not None
@@ -815,15 +933,15 @@ class PIIRL():
 
             # Here q-value is the p_flow value
             '''
-            From range value, we could know that 
-            self.env.action_shape is int 
+            From range value, we could know that
+            self.env.action_shape is int
             self.env.state_shape is int
             '''
             q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
             '''
             Initialization of Policy at Final Time Step (self.horizon-1)
-                Policy is initialized to a uniform distribution across all actions for each state. 
+                Policy is initialized to a uniform distribution across all actions for each state.
                 This reflects an assumption of equal likelihood of actions in the absence of future information.
             '''
             for s in range(self.env.state_count):
@@ -845,32 +963,13 @@ class PIIRL():
                 for s_current in range(0, self.env.state_count):
                     # for every possible action
                     for a_current in range(0, self.env.action_count):
-                        '''
-                        Onehot_encoding is used to fit input requirements of a typical neural network model
 
-                        We could see it separately :
-                            1. torch.from_numpy(self.onehot_encoding(self.env.state_shape, s_current)).to(self.device, torch.float)
-                                1) One_hot will be list with length = self.env.state_shape and all be 0 but index of s_current is 1
-                            2. torch.from_numpy(self.onehot_encoding(self.env.action_shape, a_current)).to(self.device, torch.float)
-                                1) One_hot will be list with length = self.env.action_shape and all be 0 but index of a_current is 1
-                            3. torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
-                                1) Input the current mf_flow to the NN
-
-                        So that we can get the current reward which is the Q-value
-
-                        In another word this is immediate Reward 
-                        '''
                         q_values.val[t, s_current, a_current] += self.reward_model(
                             torch.tensor(self.env.state_option[s_current]).to(self.device,torch.float),
                             torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
                             torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
                             ).detach().cpu().numpy()
-                        # next step
-                        '''
-                        First we need to consider the next reward
 
-                        In a word, Future Reward
-                        '''
                         for s_next in range(0, self.env.state_count):
                             # Consider the current state and action
                             # we let our q-value at this time to the sum of all next
@@ -901,7 +1000,7 @@ class PIIRL():
                 We have already consider the current S and T 's all actions
                 then we need to update the policy under current T
 
-                policy is updated using a softmax function = q_values 
+                policy is updated using a softmax function = q_values
                 '''
                 for s in range(0, self.env.state_count):
                     partition = 0.0
@@ -934,6 +1033,9 @@ class PIIRL():
         self.mf_flow = mf_flow
         self.p_flow = p_flow
         return [mf_flow, p_flow]
+
+
+
 
     def recover_expected_return(self):
         assert self.mf_flow is not None and self.p_flow is not None
