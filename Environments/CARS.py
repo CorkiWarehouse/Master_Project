@@ -35,13 +35,13 @@ class Env(Environment):
         self.action_shape = 1
 
         # this is one hyper-parameter
-        self.position_unit = 1/10 # here is the delt_x
+        self.position_unit = 1/8# here is the delt_x
         self.time_unit = self.position_unit  # delt_t time difference
         self.road_length = 1 # this is the length of the road
 
         self.velocity_max = 1 # max velocity
 
-        self.total_time = 10  # time horizon
+        self.total_time = 20 # time horizon
 
         # TODO Could we still use this value ?
         self.action_option = np.round(np.arange(self.time_unit, 1+self.time_unit, self.time_unit), 3).tolist()  # here is all velocity choices
@@ -283,4 +283,33 @@ class Env(Environment):
     #             valid_actions.append(action)
     #
     #     return valid_actions
+
+    def get_neighbors(self, state, mean_field=None):
+        # Get the current position x corresponding to the state index
+        x_current = self.state_option[state]  # Assuming state.val is a list or array
+
+        neighbors = set()
+
+        # Consider all possible actions (velocities)
+        for velocity in self.action_option:
+            if self.is_original_dynamics == 0:
+                # Compute previous position nx that would lead to current position x_current
+                nx = (x_current - self.time_unit * velocity) % self.road_length
+                # Find the closest state index to nx
+                nx_index = self.state_option.index(min(self.state_option, key=lambda pos: abs(pos - nx)))
+                # if nx_index == state:
+                #     continue
+                neighbors.add(nx_index)
+            else:
+                # Modified dynamics with noise
+                for noise_velocity in self.noise_option:
+                    effective_velocity = (1 - self.p) * velocity + self.p * noise_velocity
+                    nx = (x_current - self.time_unit * effective_velocity) % self.road_length
+                    nx_index = self.state_option.index(min(self.state_option, key=lambda pos: abs(pos - nx)))
+                    neighbors.add(nx_index)
+
+        # if len(neighbors) == 0:
+        #     neighbors.add(state - 1)
+        return list(neighbors)
+
 

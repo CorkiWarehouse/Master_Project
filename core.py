@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from scipy.special import entr
+from scipy.stats import wasserstein_distance
 
 '''
 Constrain all the variables 
@@ -367,16 +368,22 @@ IRL process
 '''
 
 class IRL(object):
-    def __init__(self, data, env: Environment, horizon: int, device):
-        self.data = data
+    def __init__(self, data_expert, env: Environment, horizon: int, device, num_tra,num_game):
+        self.data_expert = data_expert
         self.env = env
         self.device = device
         self.reward_model = None
         self.horizon = horizon
-        self.mf_flow = None
-        self.p_flow = None
+        self.mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=horizon)
+        self.p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, a=self.env.action_count, t = horizon)
         self.expected_return = 0.0
 
+        self.data_policy_theta = None
+
+        self.num_of_game_plays = num_game
+        self.num_traj = num_tra
+
+        self.training_metrics = None
 
     # Saves the trained reward model to a specified path
     def save_model(self, path: str):
@@ -410,6 +417,7 @@ class IRL(object):
         '''状态特征向量长度'''
         mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
         p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+        # q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
         # Here is the training process
         for _ in range(MAX):
@@ -422,7 +430,6 @@ class IRL(object):
             self.env.state_shape is int
             '''
             q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
-
             '''
             Initialization of Policy at Final Time Step (self.horizon-1)
                 Policy is initialized to a uniform distribution across all actions for each state. 
@@ -521,7 +528,7 @@ class IRL(object):
             '''
             This is Convergence Check
             '''
-            distance = torch.nn.MSELoss(reduction='sum', size_average=True)
+            distance = torch.nn.MSELoss(reduction='mean')
             if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
                 break
             else:
@@ -585,7 +592,29 @@ class IRL(object):
         dev_mean_field = kl_div((torch.from_numpy(self.mf_flow.val) + 1e-9).log(),
                                 torch.from_numpy(expert_mf_flow.val)
                                 ).detach().cpu().numpy()
+
+        # distance_mf = wasserstein_distance(expert_mf_flow.val, self.mf_flow.val)
+
         kl_div = nn.KLDivLoss(reduction='none')
         kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_count).sum(1)
         dev_policy = torch.mul(kl_policy, torch.from_numpy(expert_mf_flow.val.reshape(1, -1))).sum().detach().cpu().numpy()
+
+        # distance_mf = wasserstein_distance(expert_mf_flow.val, self.mf_flow.val)
+        # distance_policy = wasserstein_distance(expert_p_flow.val, self.p_flow.val)
+        #
+        # # 计算均值场分布的 Wasserstein 距离
+        # dev_mean_field = wasserstein_distance(self.mf_flow.val.ravel(), expert_mf_flow.val.ravel())
+        #
+        # # 对于策略分布，我们需要对每个时间步和每个状态的策略进行迭代计算
+        # dev_policy_list = []
+        # for t in range(self.p_flow.val.shape[0]):  # 遍历所有时间步
+        #     for s in range(self.p_flow.val.shape[1]):  # 遍历所有状态
+        #         # 计算当前状态下的策略分布之间的 Wasserstein 距离
+        #         w_dist = wasserstein_distance(self.p_flow.val[t, s, :], expert_p_flow.val[t, s, :])
+        #         # 将距离加权后加入列表
+        #         dev_policy_list.append(w_dist * expert_mf_flow.val[t, s])
+        #
+        # # 将所有加权的 Wasserstein 距离求和得到总的策略分布差异
+        # dev_policy = np.sum(dev_policy_list)
+
         return [self.expected_return, dev_mean_field, dev_policy]

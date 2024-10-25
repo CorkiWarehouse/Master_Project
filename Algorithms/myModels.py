@@ -177,6 +177,7 @@ This is the neural network which is used to train the policy
 class MeanFieldModel(nn.Module):
     def __init__(self, state_shape, time_horizon, num_of_units):
         super(MeanFieldModel, self).__init__()
+        self.dropout = nn.Dropout(p=0.5)
         input_size = time_horizon + state_shape
 
         self.layers = nn.Sequential(
@@ -202,9 +203,19 @@ class MeanFieldModel(nn.Module):
 
     def forward(self, state_input, time_input):
         state_input, action_input, mf_input, time_input = prepare_tensors(state=state_input, time=time_input)
-        x = torch.cat([state_input, time_input], dim=0)
+
+        # Concatenate along dim=0 as before
+        x = torch.cat([state_input, time_input], dim=0)  # Shape: (2 * batch_size, feature_size)
+
+        # Reshape x to (batch_size, input_size)
+        # batch_size = state_input.size(0)
+        # x = x.view(batch_size, -1)  # Now x has shape: (batch_size, state_shape + time_horizon)
+
         x = self.layers[:-1](x)  # Pass through all layers except the last one
+        # x = self.dropout(x)
         x = self.layers[-1](x)  # Apply the final Sigmoid activation
+        none_zero = 1e-10
+        x = x * (1 - none_zero) + none_zero
         return x
 
 class PolicyModel(nn.Module):

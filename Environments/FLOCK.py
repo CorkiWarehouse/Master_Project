@@ -134,8 +134,11 @@ class Env(Environment):
         v_x_mean = v_x / self.state_count
         v_y_mean = v_y / self.state_count
 
+        # v_x_mean = np.sum(self.state_option[:, 2] * mean_field.val)
+        # v_y_mean = np.sum(self.state_option[:, 3] * mean_field.val)
+
         inner = np.array([-v_x_mean + self.state_option[state.val[0]][2], -v_y_mean + self.state_option[state.val[0]][3]]) # * mean_field.val[state.val[0]]
-        f_value = -np.linalg.norm(inner, ord=1)**2
+        f_value = -np.linalg.norm(inner, ord=2)**2
 
         # here we get the action part
         action_contribution = np.linalg.norm(self.action_option[action.val[0]], ord=2) **2
@@ -184,9 +187,11 @@ class Env(Environment):
         # at last, we need to normalize the output
         # Normalize the mean field values so they sum to 1
         total = np.sum(next_mean_field.val)
-        if total > 0:  # Avoid division by zero
+        if total > 0:
             next_mean_field.val /= total
-
+        else:
+            # Reinitialize to uniform distribution or handle zero total
+            next_mean_field.val = np.ones(self.state_count) / self.state_count
         return next_mean_field
 
 
@@ -281,6 +286,8 @@ class Env(Environment):
                 new_result[i] = -1
             elif value[i] < -1:
                 new_result[i] = 1
+            else:
+                new_result[i] = value[i]
 
         return new_result
 

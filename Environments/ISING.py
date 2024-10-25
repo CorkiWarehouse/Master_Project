@@ -145,3 +145,17 @@ class Env(Environment):
             next_prob[0] = 1
 
         return next_prob
+
+
+    # this is because that our action will directly
+    # give the results so we just need to all the states
+    def get_neighbors(self, state, mean_field = None):
+        # Convert state_index to x, y coordinates
+        x = self.state_option[state]
+
+        neighbors = []
+
+        for d in range(self.state_count):
+            neighbors.append(d)
+
+        return np.array(neighbors)

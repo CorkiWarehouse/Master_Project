@@ -1,4 +1,6 @@
 import os
+import pickle
+import time
 
 import seaborn as sns
 import pandas as pd
@@ -48,6 +50,7 @@ if __name__ == '__main__':
     #exper_data = expert.generate_trajectories(arglist.max_num_game_plays, arglist.num_traj)
     expert.compute_ermfne()
 
+
     clear_log_file('PIMFIRL_training_log.txt')
 
 
@@ -62,7 +65,9 @@ if __name__ == '__main__':
             # FIXME we only have the value for num of trajectories
             # Change from arglist.num_agent to arglist.num_traj
             # trajectories = expert.generate_trajectories(num_of_game_plays, arglist.num_traj)
-            trajectories = expert.generate_trajectories(num_of_game_plays, arglist.num_traj)
+            # trajectories = expert.generate_trajectories(num_of_game_plays, arglist.num_traj)
+            trajectories = expert.generate_trajectories_from_policy_flow(num_of_game_plays, arglist.num_traj,
+                                                                         expert.p_flow,expert.mf_flow)
             # trajectoriesMDP = expert.generate_trajectories_MDP(num_of_game_plays, arglist.num_traj)
 
 
@@ -71,10 +76,9 @@ if __name__ == '__main__':
             # npiirl = NPIIRL(data_expert=trajectories, env=env, horizon=arglist.horizon, device=arglist.device,
             #               num_of_game_plays=num_of_game_plays, num_traj=arglist.num_traj)
 
-            piirl = PIIRL(data_expert = trajectories, env=env, horizon=arglist.horizon, device=arglist.device, num_of_game_plays=num_of_game_plays, num_traj= arglist.num_traj)
+            piirl = PIIRL(data_expert=trajectories, env=env, horizon=arglist.horizon, device=arglist.device,num_tra = arglist.num_traj, num_game = num_of_game_plays)
 
-            npiirl = NPIIRL(data_expert=trajectories, env=env, horizon=arglist.horizon, device=arglist.device,
-                          num_of_game_plays=num_of_game_plays, num_traj=arglist.num_traj)
+            npiirl = NPIIRL(data_expert=trajectories, env=env, horizon=arglist.horizon, device=arglist.device,num_tra = arglist.num_traj, num_game = num_of_game_plays)
 
             # mfirl.train(max_epoch=arglist.max_epoch,
             #             learning_rate=arglist.lr,
@@ -106,11 +110,13 @@ if __name__ == '__main__':
 
 
             # mdpmfgirl.save_model(model_save_path + 'mdp_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
+            start_time = time.time()
 
             piairl_expected_return, piairl_dev_mf, piairl_dev_p = piirl.divergence(expert_mf_flow=expert.mf_flow,expert_p_flow=expert.p_flow)
 
             npiairl_expected_return, npiairl_dev_mf, npiairl_dev_p = npiirl.divergence(expert_mf_flow=expert.mf_flow,expert_p_flow=expert.p_flow)
-
+            end_time = time.time()
+            epoch_duration = end_time - start_time
             # results = results._append(pd.DataFrame(
             #     [[num_of_game_plays, 'PIIRL', abs(float(expert.expected_return) - float(piairl_expected_return)),
             #       float(piairl_dev_mf), float(piairl_dev_p)],
@@ -136,6 +142,87 @@ if __name__ == '__main__':
             # mfirl.save_model(model_save_path + 'mfirl_' + str(num_of_game_plays) + '_' + str(run) + '.pt')
             print(abs(float(expert.expected_return) - float(piairl_expected_return)),float(piairl_dev_mf), float(piairl_dev_p))
             print(abs(float(expert.expected_return) - float(npiairl_expected_return)),float(npiairl_dev_mf), float(npiairl_dev_p))
+            print(expert.expected_return,piairl_expected_return,npiairl_expected_return)
+            print("time:",epoch_duration)
+
+            # 初始化字典或数组来存储频率
+            state_counts = np.zeros(env.state_count)
+            action_counts = np.zeros(env.action_count)
+            state_action_counts = np.zeros((env.state_count, env.action_count))
+            transition_counts = np.zeros((env.state_count, env.state_count))
+
+            # 遍历专家轨迹，收集频率数据
+            for traj in trajectories:
+                for t in range(len(traj.states)):
+                    s = int(traj.states[t])
+                    a = int(traj.actions[t])
+                    state_counts[s] += 1
+                    action_counts[a] += 1
+                    state_action_counts[s, a] += 1
+                    if t < len(traj.states) - 1:
+                        s_next = int(traj.states[t + 1])
+                        transition_counts[s, s_next] += 1
+
+            # 归一化频率，得到分布
+            total_states = np.sum(state_counts)
+            state_distribution = state_counts / total_states
+
+            total_actions = np.sum(action_counts)
+            action_distribution = action_counts / total_actions
+
+            total_state_actions = np.sum(state_action_counts)
+            state_action_distribution = state_action_counts / total_state_actions
+
+            total_transitions = np.sum(transition_counts)
+            transition_distribution = transition_counts / total_transitions
+
+            # 保存分布数据以供分析
+            expert_data_attributes = {
+                'state_distribution': state_distribution,
+                'action_distribution': action_distribution,
+                'state_action_distribution': state_action_distribution,
+                'transition_distribution': transition_distribution
+            }
+
+            # 可选：保存到文件
+            import pickle
+
+            with open(results_save_path + f'expert_data_attributes_{num_of_game_plays}_{run}.pkl', 'wb') as f:
+                pickle.dump(expert_data_attributes, f)
+
+            # Visualize expert distributions
+            plt.figure()
+            plt.bar(range(env.state_count), state_distribution)
+            plt.xlabel('State')
+            plt.ylabel('Frequency')
+            plt.title('Expert State Distribution')
+            plt.savefig(results_save_path + f'expert_state_distribution_{num_of_game_plays}_{run}.png')
+            plt.close()
+
+            plt.figure()
+            plt.bar(range(env.action_count), action_distribution)
+            plt.xlabel('Action')
+            plt.ylabel('Frequency')
+            plt.title('Expert Action Distribution')
+            plt.savefig(results_save_path + f'expert_action_distribution_{num_of_game_plays}_{run}.png')
+            plt.close()
+
+            plt.figure()
+            sns.heatmap(state_action_distribution, annot=True, fmt=".2f", cmap='Blues')
+            plt.xlabel('Action')
+            plt.ylabel('State')
+            plt.title('Expert State-Action Distribution')
+            plt.savefig(results_save_path + f'expert_state_action_distribution_{num_of_game_plays}_{run}.png')
+            plt.close()
+
+            plt.figure()
+            sns.heatmap(transition_distribution, annot=False, cmap='Blues')
+            plt.xlabel('Next State')
+            plt.ylabel('Current State')
+            plt.title('Expert Transition Distribution')
+            plt.savefig(results_save_path + f'expert_transition_distribution_{num_of_game_plays}_{run}.png')
+            plt.close()
+
             num_of_game_plays += 1
 
             #print("we have done one round ")

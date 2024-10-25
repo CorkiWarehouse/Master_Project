@@ -36,11 +36,11 @@ def parse_args():
         4. --gamma: discount factor (Training Rate Or Learning rate)
         5. --beta: entropy regularisation strength (Max Entropy Using?)
     '''
-    parser.add_argument("--env_name", type=str, default="CARS", help="the environment model (LR)")
+    parser.add_argument("--env_name", type=str, default="FLOCK", help="the environment model (LR)")
     parser.add_argument("--is_original_dynamics", type=int, default=0, help="original or new dynamics. 0: original, 1: new")
-    parser.add_argument("--horizon", type=int, default=10, help="horizon of mean field games")
+    parser.add_argument("--horizon", type=int, default=15, help="horizon of mean field games")
     parser.add_argument("--gamma", type=float, default=0.99, help="discount factor")
-    parser.add_argument("--beta", type=float, default=1.0, help="entropy regularisation strength")
+    parser.add_argument("--beta", type=float, default=1, help="entropy regularisation strength")
 
     # core training parameters
     '''
@@ -74,7 +74,7 @@ def parse_args():
     '''
 
     parser.add_argument("--num_runs", type=int, default=5, help="number of independent runs")
-    parser.add_argument("--num_traj", type=int, default=30, help="number of trajectories generated per game play")
+    parser.add_argument("--num_traj", type=int, default=20, help="number of trajectories generated per game play")
     parser.add_argument("--max_num_game_plays", type=int, default=10, help="maximal number of sampled game_plays")
 
     # checkpointing
