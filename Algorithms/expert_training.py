@@ -1,6 +1,7 @@
 """
 Compute MFLQRE and generate trajectories
 """
+import random
 
 import numpy as np
 import torch
@@ -37,6 +38,15 @@ class Expert(object):
         self.p_flow = None
         self.expected_return = 0.0
 
+        # def set_seed(seed):
+        #     torch.manual_seed(seed)
+        #     torch.cuda.manual_seed_all(seed)
+        #     np.random.seed(seed)
+        #     random.seed(seed)
+        #     torch.backends.cudnn.deterministic = True
+        #
+        # set_seed(42)  #
+
     # generate the mean field nash equilibrium
     '''
         
@@ -44,21 +54,15 @@ class Expert(object):
 
     def compute_ermfne(self):
         mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
-        if self.env.init_mf is not None:
-            # print(mf_flow.val[0])
-            # print(self.env.init_mf.val[0])
-            mf_flow.val[0] = self.env.init_mf.val
         p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
         for _ in range(MAX):
             p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
             q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
             for s in range(self.env.state_count):
-                # p_flow.val[self.horizon - 1, s, :] = np.array(
-                #     [1 / self.env.action_count for _ in range(self.env.action_count)])
                 p_flow.val[self.horizon - 1, s, :] = np.array(
                     [1 / self.env.action_count for _ in range(self.env.action_count)])
 
-                    # print(p_flow.val)
+                # print(p_flow.val)
 
             # compute Q values and policy flow
             for t in reversed(range(0, self.horizon - 1)):
@@ -70,7 +74,6 @@ class Expert(object):
                                                                                          t])).val[0]
                         # next step
                         for s_next in range(self.env.state_count):
-
                             q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
                                                                                          Action(action=a_current),
                                                                                          MeanField(
@@ -108,8 +111,8 @@ class Expert(object):
                 mf_flow_next.val[t] = mf.val
 
             # check the distance between new and old mean field flows
-            #sinkhorn = geomloss.SamplesLoss('sinkhorn')
-            #distance = np.array([sinkhorn(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) for t in range(0, self.horizon)])
+            # sinkhorn = geomloss.SamplesLoss('sinkhorn')
+            # distance = np.array([sinkhorn(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) for t in range(0, self.horizon)])
             distance = torch.nn.MSELoss(reduction='sum', size_average=True)
             print(distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)))
             if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
@@ -129,6 +132,96 @@ class Expert(object):
 
         self.mf_flow = mf_flow
         self.p_flow = p_flow
+
+    # def compute_ermfne(self):
+    #     # Initialize mean field flow
+    #     mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+    #     if self.env.init_mf is not None:
+    #         mf_flow.val[0] = self.env.init_mf.val
+    #     else:
+    #         # Initialize with uniform distribution if no initial mean field is provided
+    #         mf_flow.val[0] = np.full(self.env.state_count, 1.0 / self.env.state_count)
+    #
+    #     # Initialize policy flow and Q-values once before the loop
+    #     p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #     q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #
+    #     for iteration in range(MAX):
+    #         # Reset Q-values for each iteration
+    #         q_values.val.fill(0.0)
+    #
+    #         # Initialize the last time step policy flow
+    #         for s in range(self.env.state_count):
+    #             p_flow.val[self.horizon - 1, s, :] = np.full(self.env.action_count, 1.0 / self.env.action_count)
+    #
+    #         # Backward induction to compute Q-values and policy flow
+    #         for t in reversed(range(0, self.horizon - 1)):
+    #             for s_current in range(self.env.state_count):
+    #                 for a_current in range(self.env.action_count):
+    #                     # Immediate reward
+    #                     reward = self.env.get_reward(State(state=s_current),
+    #                                                  Action(action=a_current),
+    #                                                  MeanField(mean_field=mf_flow.val[t])).val[0]
+    #                     q_value = reward
+    #
+    #                     # Expected future rewards and entropy
+    #                     expected_future = 0.0
+    #                     entropy_term = 0.0
+    #                     trans_probs = self.env.trans_prob(State(state=s_current),
+    #                                                       Action(action=a_current),
+    #                                                       MeanField(mean_field=mf_flow.val[t]))
+    #                     for s_next in range(self.env.state_count):
+    #                         prob_s_next = trans_probs[s_next]
+    #                         # Entropy of the next policy
+    #                         entropy = -np.sum(
+    #                             p_flow.val[t + 1, s_next, :] * np.log(p_flow.val[t + 1, s_next, :] + 1e-12))
+    #                         entropy_term += prob_s_next * self.env.beta * entropy
+    #
+    #                         # Expected Q-value at next state
+    #                         expected_q_next = np.sum(p_flow.val[t + 1, s_next, :] * q_values.val[t + 1, s_next, :])
+    #                         expected_future += prob_s_next * expected_q_next
+    #
+    #                     # Apply the discount factor to the expected future rewards
+    #                     q_values.val[t, s_current, a_current] = q_value + entropy_term + self.env.beta * expected_future
+    #
+    #             # Update policy flow using numerically stable softmax
+    #             for s in range(self.env.state_count):
+    #                 max_q = np.max(q_values.val[t, s, :])
+    #                 exp_q = np.exp((q_values.val[t, s, :] - max_q) / self.env.beta)
+    #                 partition = np.sum(exp_q)
+    #                 p_flow.val[t, s, :] = exp_q / partition
+    #
+    #         # Compute mean field flow induced by the policy flow
+    #         mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+    #         mf_flow_next.val[0] = mf_flow.val[0, :]
+    #         for t in range(1, self.horizon):
+    #             # Advance the mean field using the policy at previous time step
+    #             mf = self.env.advance(Policy(policy=p_flow.val[t - 1]), MeanField(mean_field=mf_flow.val[t - 1]))
+    #             mf_flow_next.val[t] = mf.val
+    #
+    #         # Check convergence using MSE distance
+    #         distance_fn = torch.nn.MSELoss(reduction='mean')
+    #         distance_value = distance_fn(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val))
+    #         print(f"Iteration {iteration}: Distance = {distance_value.item()}")
+    #
+    #         if distance_value.item() < MIN:
+    #             # Compute expected return under equilibrium
+    #             self.expected_return = 0.0
+    #             for s in range(self.env.state_count):
+    #                 max_q = np.max(q_values.val[0, s, :])
+    #                 exp_q = np.exp((q_values.val[0, s, :] - max_q) / self.env.beta)
+    #                 partition = np.sum(exp_q)
+    #                 policy_probs = exp_q / partition
+    #                 for a in range(self.env.action_count):
+    #                     self.expected_return += mf_flow.val[0, s] * policy_probs[a] * q_values.val[0, s, a]
+    #             print("Converged")
+    #             break
+    #         else:
+    #             # Continue iteration
+    #             mf_flow = mf_flow_next
+    #
+    #     self.mf_flow = mf_flow
+    #     self.p_flow = p_flow
 
     def generate_trajectories(self, num_game_play: int, num_traj: int):
         states = [i for i in range(self.env.state_count)]
@@ -154,7 +247,7 @@ class Expert(object):
         return data
 
     def generate_trajectories_from_policy_flow(self, num_game_play: int, num_traj: int, current_policy_flow,
-                                               current_mean_field_flow, deterministic=True):
+                                               current_mean_field_flow, deterministic=False):
         states = [i for i in range(self.env.state_count)]  # State space
         actions = [i for i in range(self.env.action_count)]  # Action space
         assert (current_mean_field_flow is not None) and (self.p_flow is not None)
@@ -171,6 +264,9 @@ class Expert(object):
                 # Sample action based on the current policy flow
                 # For we have all the 0 but 1, so that the argmax can get
                 # Still we need the int type
+                current_policy_flow.val[t, s, :] = (current_policy_flow.val[t, s, :] /
+                                                    sum(current_policy_flow.val[t, s, :]))
+
                 a = np.argmax(current_policy_flow.val[t, s, :]) if deterministic else \
                     np.random.choice(actions, 1, p=current_policy_flow.val[t, s, :])[0]
 

@@ -70,3 +70,16 @@ class Env(Environment):
                 return np.array([0.9, 0.1])
             else:
                 return np.array([0.1, 0.9])
+
+    def get_neighbors(self, state_index):
+        """
+        Returns the neighboring states for a given state index.
+        In the LR environment, each state is a neighbor of the other.
+        """
+        if state_index == 0:
+            return [1]
+        elif state_index == 1:
+            return [0]
+        else:
+            # If the state_index is invalid, return an empty list
+            return []

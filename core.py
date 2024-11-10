@@ -411,210 +411,373 @@ class IRL(object):
     Recovers the equilibrium mean field Nash equilibrium (ERM-FNE) 
     using an iterative approach.
     '''
+    # def recover_ermfne(self) -> [MeanFieldFlow, PolicyFlow]:
+    #     assert self.reward_model is not None
+    #     # Init the mf_flow and p_flow
+    #     '''状态特征向量长度'''
+    #     mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+    #     p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #     # q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #
+    #     # Here is the training process
+    #     for _ in range(MAX):
+    #         p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #
+    #         # Here q-value is the p_flow value
+    #         '''
+    #         From range value, we could know that
+    #         self.env.action_shape is int
+    #         self.env.state_shape is int
+    #         '''
+    #         q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #         '''
+    #         Initialization of Policy at Final Time Step (self.horizon-1)
+    #             Policy is initialized to a uniform distribution across all actions for each state.
+    #             This reflects an assumption of equal likelihood of actions in the absence of future information.
+    #         '''
+    #         for s in range(self.env.state_count):
+    #             # let last time's policy_flow's action's probability be init = 1/(number_of_action)
+    #             '''Here is the current time for we start at 0'''
+    #             p_flow.val[self.horizon - 1, s, :] = (
+    #                 np.array([1 / self.env.action_count for _ in range(self.env.action_count)]))
+    #
+    #         # compute Q values and policy flow
+    #         '''
+    #         Calculation of Q-values and Policy Flow
+    #
+    #         '''
+    #         # for this time t
+    #         # We only calculate until the last 2
+    #         # self.horizon - 2
+    #         for t in reversed(range(0, self.horizon - 1)):
+    #             # every state s
+    #             for s_current in range(0, self.env.state_count):
+    #                 # for every possible action
+    #                 for a_current in range(0, self.env.action_count):
+    #                     '''
+    #                     Onehot_encoding is used to fit input requirements of a typical neural network model
+    #
+    #                     We could see it separately :
+    #                         1. torch.from_numpy(self.onehot_encoding(self.env.state_shape, s_current)).to(self.device, torch.float)
+    #                             1) One_hot will be list with length = self.env.state_shape and all be 0 but index of s_current is 1
+    #                         2. torch.from_numpy(self.onehot_encoding(self.env.action_shape, a_current)).to(self.device, torch.float)
+    #                             1) One_hot will be list with length = self.env.action_shape and all be 0 but index of a_current is 1
+    #                         3. torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
+    #                             1) Input the current mf_flow to the NN
+    #
+    #                     So that we can get the current reward which is the Q-value
+    #
+    #                     In another word this is immediate Reward
+    #                     '''
+    #                     q_values.val[t, s_current, a_current] += self.reward_model(
+    #                         torch.tensor(self.env.state_option[s_current]).to(self.device, torch.float),
+    #                         torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
+    #                         torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
+    #                         ).detach().cpu().numpy()
+    #                     # next step
+    #                     '''
+    #                     First we need to consider the next reward
+    #
+    #                     In a word, Future Reward
+    #                     '''
+    #                     for s_next in range(0, self.env.state_count):
+    #                         # Consider the current state and action
+    #                         # we let our q-value at this time to the sum of all next
+    #                         # Same as we first consider the s_next's future reward
+    #                         q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
+    #                                                                                      Action(action=a_current),
+    #                                                                                      MeanField(mean_field=mf_flow.val[t]))[s_next] \
+    #                                                                  * self.env.beta * np.sum(entr(p_flow.val[t+1, s_next, :]))
+    #                                                                 # Above will be the sum of t+1's all policy's value
+    #                                                                 # and this "entr" is the entropy term
+    #
+    #                         # then we consider all the action of the s_next
+    #                         for a_next in range(0, self.env.action_count):
+    #                             q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
+    #                                                                                          Action(action=a_current),
+    #                                                                                          MeanField(mean_field=mf_flow.val[t]))[s_next] \
+    #                                                                      * p_flow.val[t+1, s_next, a_next] \
+    #                                                                      * q_values.val[t+1, s_next, a_next]
+    #                                                                     # this p_flow.val is the possible that we taking action
+    #
+    #             # compute policy induced by the mean filed
+    #             '''
+    #             We have already consider the current S and T 's all actions
+    #             then we need to update the policy under current T
+    #
+    #             policy is updated using a softmax function = q_values
+    #             '''
+    #             for s in range(0, self.env.state_count):
+    #                 partition = 0.0
+    #                 # let our value from 0-1
+    #                 for a in range(0, self.env.action_count):
+    #                     # have all the exp value beh
+    #                     partition += np.exp(q_values.val[t, s, a] / self.env.beta)
+    #                 for a in range(0, self.env.action_count):
+    #                     p_flow.val[t, s, a] = np.exp(q_values.val[t, s, a] / self.env.beta) / partition
+    #
+    #         # compute mean field flow induced by the policy flow
+    #         mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
+    #         mf_flow_next.val[0] = mf_flow.val[0, :]
+    #         for t in range(1, self.horizon):
+    #             # this will give the next Mean Field
+    #             mf = self.env.advance(Policy(policy=p_flow.val[t-1]), MeanField(mean_field=mf_flow.val[t-1]))
+    #             mf_flow_next.val[t] = mf.val
+    #
+    #         # check the distance between new and old mean field flows
+    #         '''
+    #         This is Convergence Check
+    #         '''
+    #         distance = torch.nn.MSELoss(reduction='mean')
+    #         if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
+    #             break
+    #         else:
+    #             mf_flow = mf_flow_next
+    #
+    #     # this is return value
+    #     self.mf_flow = mf_flow
+    #     self.p_flow = p_flow
+    #     return [mf_flow, p_flow]
+
     def recover_ermfne(self) -> [MeanFieldFlow, PolicyFlow]:
         assert self.reward_model is not None
-        # Init the mf_flow and p_flow
-        '''状态特征向量长度'''
         mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
         p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
-        # q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+        q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
 
-        # Here is the training process
-        for _ in range(MAX):
-            p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+        # Initialize the mean field
+        # mf_flow.val[0] = self.env.init_mf.val.copy()
 
-            # Here q-value is the p_flow value
-            '''
-            From range value, we could know that 
-            self.env.action_shape is int 
-            self.env.state_shape is int
-            '''
-            q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
-            '''
-            Initialization of Policy at Final Time Step (self.horizon-1)
-                Policy is initialized to a uniform distribution across all actions for each state. 
-                This reflects an assumption of equal likelihood of actions in the absence of future information.
-            '''
+        for iteration in range(MAX):
+            # Reset Q-values
+            q_values.val.fill(0.0)
+
+            # Initialize policy at the last time step
             for s in range(self.env.state_count):
-                # let last time's policy_flow's action's probability be init = 1/(number_of_action)
-                '''Here is the current time for we start at 0'''
-                p_flow.val[self.horizon - 1, s, :] = (
-                    np.array([1 / self.env.action_count for _ in range(self.env.action_count)]))
+                p_flow.val[self.horizon - 1, s, :] = np.full(self.env.action_count, 1.0 / self.env.action_count)
 
-            # compute Q values and policy flow
-            '''
-            Calculation of Q-values and Policy Flow
-             
-            '''
-            # for this time t
-            # We only calculate until the last 2
-            # self.horizon - 2
+            # Backward induction to compute Q-values
             for t in reversed(range(0, self.horizon - 1)):
-                # every state s
-                for s_current in range(0, self.env.state_count):
-                    # for every possible action
-                    for a_current in range(0, self.env.action_count):
-                        '''
-                        Onehot_encoding is used to fit input requirements of a typical neural network model
-                        
-                        We could see it separately :
-                            1. torch.from_numpy(self.onehot_encoding(self.env.state_shape, s_current)).to(self.device, torch.float)
-                                1) One_hot will be list with length = self.env.state_shape and all be 0 but index of s_current is 1
-                            2. torch.from_numpy(self.onehot_encoding(self.env.action_shape, a_current)).to(self.device, torch.float)
-                                1) One_hot will be list with length = self.env.action_shape and all be 0 but index of a_current is 1
-                            3. torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
-                                1) Input the current mf_flow to the NN
-                                
-                        So that we can get the current reward which is the Q-value
-                        
-                        In another word this is immediate Reward 
-                        '''
-                        q_values.val[t, s_current, a_current] += self.reward_model(
+                for s_current in range(self.env.state_count):
+                    for a_current in range(self.env.action_count):
+                        # Immediate reward
+                        immediate_reward = self.reward_model(
                             torch.tensor(self.env.state_option[s_current]).to(self.device, torch.float),
                             torch.tensor(self.env.action_option[a_current]).to(self.device, torch.float),
                             torch.from_numpy(mf_flow.val[t]).to(self.device, torch.float)
-                            ).detach().cpu().numpy()
-                        # next step
-                        '''
-                        First we need to consider the next reward
-                        
-                        In a word, Future Reward
-                        '''
-                        for s_next in range(0, self.env.state_count):
-                            # Consider the current state and action
-                            # we let our q-value at this time to the sum of all next
-                            # Same as we first consider the s_next's future reward
-                            q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
-                                                                                         Action(action=a_current),
-                                                                                         MeanField(mean_field=mf_flow.val[t]))[s_next] \
-                                                                     * self.env.beta * np.sum(entr(p_flow.val[t+1, s_next, :]))
-                                                                    # Above will be the sum of t+1's all policy's value
-                                                                    # and this "entr" is the entropy term
+                        ).detach().cpu().numpy()
 
-                            # then we consider all the action of the s_next
-                            for a_next in range(0, self.env.action_count):
-                                q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
-                                                                                             Action(action=a_current),
-                                                                                             MeanField(mean_field=mf_flow.val[t]))[s_next] \
-                                                                         * p_flow.val[t+1, s_next, a_next] \
-                                                                         * q_values.val[t+1, s_next, a_next]
-                                                                        # this p_flow.val is the possible that we taking action
+                        # Expected future value
+                        expected_future_value = 0.0
+                        for s_next in range(self.env.state_count):
+                            trans_prob = self.env.trans_prob(
+                                State(state=s_current),
+                                Action(action=a_current),
+                                MeanField(mean_field=mf_flow.val[t])
+                            )[s_next]
 
-                # compute policy induced by the mean filed
-                '''
-                We have already consider the current S and T 's all actions
-                then we need to update the policy under current T
-                
-                policy is updated using a softmax function = q_values 
-                '''
-                for s in range(0, self.env.state_count):
-                    partition = 0.0
-                    # let our value from 0-1
-                    for a in range(0, self.env.action_count):
-                        # have all the exp value beh
-                        partition += np.exp(q_values.val[t, s, a] / self.env.beta)
-                    for a in range(0, self.env.action_count):
-                        p_flow.val[t, s, a] = np.exp(q_values.val[t, s, a] / self.env.beta) / partition
+                            # Compute V(s_next)
+                            q_next = q_values.val[t + 1, s_next, :]
+                            max_q_next = np.max(q_next)
+                            V_s_next = self.env.beta * (
+                                        max_q_next + np.log(np.sum(np.exp(q_next - max_q_next) / self.env.beta)))
 
-            # compute mean field flow induced by the policy flow
+                            expected_future_value += trans_prob * V_s_next
+
+                        # Update Q-value
+                        q_values.val[t, s_current, a_current] = immediate_reward + self.env.beta * expected_future_value
+
+            # Update policy using softmax
+            for t in range(self.horizon):
+                for s in range(self.env.state_count):
+                    q_s = q_values.val[t, s, :]
+                    max_q = np.max(q_s)
+                    exp_q = np.exp((q_s - max_q) / self.env.beta)
+                    p_flow.val[t, s, :] = exp_q / np.sum(exp_q)
+
+            # Update mean field flow
             mf_flow_next = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
             mf_flow_next.val[0] = mf_flow.val[0, :]
             for t in range(1, self.horizon):
-                # this will give the next Mean Field
-                mf = self.env.advance(Policy(policy=p_flow.val[t-1]), MeanField(mean_field=mf_flow.val[t-1]))
+                mf = self.env.advance(Policy(policy=p_flow.val[t - 1]), MeanField(mean_field=mf_flow.val[t - 1]))
                 mf_flow_next.val[t] = mf.val
 
-            # check the distance between new and old mean field flows
-            '''
-            This is Convergence Check
-            '''
+            # Check convergence
             distance = torch.nn.MSELoss(reduction='mean')
             if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
                 break
             else:
                 mf_flow = mf_flow_next
 
-        # this is return value
         self.mf_flow = mf_flow
         self.p_flow = p_flow
         return [mf_flow, p_flow]
 
-
     '''
     We use this method to get the return from q_values
     '''
+    # def recover_expected_return(self):
+    #     assert self.mf_flow is not None and self.p_flow is not None
+    #     q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+    #     # we update it from reverse
+    #     for t in reversed(range(0, self.horizon - 1)):
+    #         for s_current in range(0, self.env.state_count):
+    #             for a_current in range(0, self.env.action_count):
+    #                 # unlike above, we directly get the reward
+    #                 q_values.val[t, s_current, a_current] += self.env.get_reward(State(state=s_current),
+    #                                                                              Action(action=a_current),
+    #                                                                              MeanField(mean_field=self.mf_flow.val[t])).val[0]
+    #                 # next step
+    #                 for s_next in range(self.env.state_count):
+    #                     q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
+    #                                                                                  Action(action=a_current),
+    #                                                                                  MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
+    #                                                              * self.env.beta * np.sum(entr(self.p_flow.val[t+1, s_next, :]))
+    #
+    #                     for a_next in range(0, self.env.action_count):
+    #                         q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
+    #                                                                                      Action(action=a_current),
+    #                                                                                      MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
+    #                                                                  * self.p_flow.val[t+1, s_next, a_next] \
+    #                                                                  * q_values.val[t+1, s_next, a_next]
+    #
+    #     # compute expected return under equilibrium and terminate iteration
+    #
+    #     # For we have update the q_values from back
+    #     # So we can get the expected return from the initial state
+    #     for s in range(0, self.env.state_count):
+    #         partition = 0.0
+    #         for a in range(0, self.env.action_count):
+    #             partition += np.exp(q_values.val[0, s, a] / self.env.beta)
+    #         for a in range(0, self.env.action_count):
+    #             self.expected_return += self.mf_flow.val[0, s] * np.exp(q_values.val[0, s, a] / self.env.beta) * q_values.val[0, s, a] / partition
+    #
+
     def recover_expected_return(self):
         assert self.mf_flow is not None and self.p_flow is not None
         q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
-        # we update it from reverse
+
+        # Compute Q-values using the corrected method
         for t in reversed(range(0, self.horizon - 1)):
-            for s_current in range(0, self.env.state_count):
-                for a_current in range(0, self.env.action_count):
-                    # unlike above, we directly get the reward
-                    q_values.val[t, s_current, a_current] += self.env.get_reward(State(state=s_current),
-                                                                                 Action(action=a_current),
-                                                                                 MeanField(mean_field=self.mf_flow.val[t])).val[0]
-                    # next step
+            for s_current in range(self.env.state_count):
+                for a_current in range(self.env.action_count):
+                    # Immediate reward
+                    immediate_reward = self.env.get_reward(
+                        State(state=s_current),
+                        Action(action=a_current),
+                        MeanField(mean_field=self.mf_flow.val[t])
+                    ).val[0]
+
+                    # Expected future value
+                    expected_future_value = 0.0
                     for s_next in range(self.env.state_count):
-                        q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
-                                                                                     Action(action=a_current),
-                                                                                     MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
-                                                                 * self.env.beta * np.sum(entr(self.p_flow.val[t+1, s_next, :]))
+                        trans_prob = self.env.trans_prob(
+                            State(state=s_current),
+                            Action(action=a_current),
+                            MeanField(mean_field=self.mf_flow.val[t])
+                        )[s_next]
 
-                        for a_next in range(0, self.env.action_count):
-                            q_values.val[t, s_current, a_current] += self.env.trans_prob(State(state=s_current),
-                                                                                         Action(action=a_current),
-                                                                                         MeanField(mean_field=self.mf_flow.val[t]))[s_next] \
-                                                                     * self.p_flow.val[t+1, s_next, a_next] \
-                                                                     * q_values.val[t+1, s_next, a_next]
+                        # Compute V(s_next)
+                        q_next = q_values.val[t + 1, s_next, :]
+                        max_q_next = np.max(q_next)
+                        V_s_next = self.env.beta * (
+                                    max_q_next + np.log(np.sum(np.exp(q_next - max_q_next) / self.env.beta)))
 
-        # compute expected return under equilibrium and terminate iteration
+                        expected_future_value += trans_prob * V_s_next
 
-        # For we have update the q_values from back
-        # So we can get the expected return from the initial state
-        for s in range(0, self.env.state_count):
-            partition = 0.0
-            for a in range(0, self.env.action_count):
-                partition += np.exp(q_values.val[0, s, a] / self.env.beta)
-            for a in range(0, self.env.action_count):
-                self.expected_return += self.mf_flow.val[0, s] * np.exp(q_values.val[0, s, a] / self.env.beta) * q_values.val[0, s, a] / partition
+                    # Update Q-value
+                    q_values.val[t, s_current, a_current] = immediate_reward + self.env.beta * expected_future_value
 
+        # Compute expected return
+        self.expected_return = 0.0
+        for s in range(self.env.state_count):
+            q_s = q_values.val[0, s, :]
+            max_q = np.max(q_s)
+            exp_q = np.exp((q_s - max_q) / self.env.beta)
+            policy_probs = exp_q / np.sum(exp_q)
+            for a in range(self.env.action_count):
+                self.expected_return += self.mf_flow.val[0, s] * policy_probs[a] * q_values.val[0, s, a]
 
     '''
     This we could see it as D
     '''
+    # def divergence(self, expert_mf_flow, expert_p_flow):
+    #     self.recover_ermfne()
+    #     self.recover_expected_return()
+    #
+    #     # # Here we calculate the Divergence
+    #     # kl_div = nn.KLDivLoss(reduction='sum')
+    #     # dev_mean_field = kl_div((torch.from_numpy(self.mf_flow.val) + 1e-10).log(),
+    #     #                         torch.from_numpy(expert_mf_flow.val)
+    #     #                         ).detach().cpu().numpy()
+    #
+    #     kl_div_mf = nn.KLDivLoss(reduction='batchmean')
+    #     log_mf = torch.log(torch.from_numpy(self.mf_flow.val + 1e-12))
+    #     target_mf = torch.from_numpy(expert_mf_flow.val)
+    #     dev_mean_field = kl_div_mf(log_mf, target_mf).item()
+    #
+    #     # distance_mf = wasserstein_distance(expert_mf_flow.val, self.mf_flow.val)
+    #
+    #     # kl_div = nn.KLDivLoss(reduction='none')
+    #     # kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_count).sum(1)
+    #     # dev_policy = torch.mul(kl_policy,
+    #     #                        torch.from_numpy(expert_mf_flow.val.reshape(1, -1))).sum().detach().cpu().numpy()
+    #
+    #     # Compute KL divergence
+    #     kl_div = nn.KLDivLoss(reduction='batchmean')
+    #
+    #     # Logarithm of p_flow with a small epsilon for numerical stability
+    #     log_p_flow = torch.log(torch.from_numpy(self.p_flow.val + 1e-9))
+    #
+    #     # Calculate the KL divergence between the policy distributions
+    #     kl_policy = kl_div(log_p_flow, torch.from_numpy(expert_p_flow.val))
+    #
+    #     # Reshape expert_mf_flow to match the dimensions required for multiplication
+    #     expert_mf_flow_reshaped = torch.from_numpy(expert_mf_flow.val).reshape(1, -1)
+    #
+    #     # Multiply the KL divergence with the expert mean field flow and sum the result
+    #     dev_policy = (kl_policy * expert_mf_flow_reshaped).sum().detach().cpu().numpy()
+    #
+    #     # distance_mf = wasserstein_distance(expert_mf_flow.val, self.mf_flow.val)
+    #     # distance_policy = wasserstein_distance(expert_p_flow.val, self.p_flow.val)
+    #     #
+    #     # # 计算均值场分布的 Wasserstein 距离
+    #     # dev_mean_field = wasserstein_distance(self.mf_flow.val.ravel(), expert_mf_flow.val.ravel())
+    #     #
+    #     # # 对于策略分布，我们需要对每个时间步和每个状态的策略进行迭代计算
+    #     # dev_policy_list = []
+    #     # for t in range(self.p_flow.val.shape[0]):  # 遍历所有时间步
+    #     #     for s in range(self.p_flow.val.shape[1]):  # 遍历所有状态
+    #     #         # 计算当前状态下的策略分布之间的 Wasserstein 距离
+    #     #         w_dist = wasserstein_distance(self.p_flow.val[t, s, :], expert_p_flow.val[t, s, :])
+    #     #         # 将距离加权后加入列表
+    #     #         dev_policy_list.append(w_dist * expert_mf_flow.val[t, s])
+    #     #
+    #     # # 将所有加权的 Wasserstein 距离求和得到总的策略分布差异
+    #     # dev_policy = np.sum(dev_policy_list)
+    #
+    #     return [self.expected_return, dev_mean_field, dev_policy]
+
     def divergence(self, expert_mf_flow, expert_p_flow):
         self.recover_ermfne()
         self.recover_expected_return()
 
-        # Here we calculate the Divergence
-        kl_div = nn.KLDivLoss(reduction='sum')
-        dev_mean_field = kl_div((torch.from_numpy(self.mf_flow.val) + 1e-9).log(),
-                                torch.from_numpy(expert_mf_flow.val)
-                                ).detach().cpu().numpy()
+        # Compute KL divergence for mean field flow
+        kl_div_mf = nn.KLDivLoss(reduction='batchmean')
+        log_mf = torch.log(torch.from_numpy(self.mf_flow.val + 1e-12))
+        target_mf = torch.from_numpy(expert_mf_flow.val)
+        dev_mean_field = kl_div_mf(log_mf, target_mf).item()
 
-        # distance_mf = wasserstein_distance(expert_mf_flow.val, self.mf_flow.val)
+        # Compute KL divergence for policy flow
+        kl_div_policy = 0.0
+        for t in range(self.horizon):
+            for s in range(self.env.state_count):
+                log_policy = torch.log(torch.from_numpy(self.p_flow.val[t, s, :] + 1e-12))
+                target_policy = torch.from_numpy(expert_p_flow.val[t, s, :])
+                kl_div = nn.KLDivLoss(reduction='batchmean')(log_policy, target_policy).item()
+                # Weight by the mean field of the expert
+                kl_div_policy += expert_mf_flow.val[t, s] * kl_div
 
-        kl_div = nn.KLDivLoss(reduction='none')
-        kl_policy = kl_div( torch.from_numpy(self.p_flow.val + 1e-9).log(), torch.from_numpy(expert_p_flow.val) ).reshape(-1, self.env.action_count).sum(1)
-        dev_policy = torch.mul(kl_policy, torch.from_numpy(expert_mf_flow.val.reshape(1, -1))).sum().detach().cpu().numpy()
+        return [self.expected_return, dev_mean_field, kl_div_policy]
 
-        # distance_mf = wasserstein_distance(expert_mf_flow.val, self.mf_flow.val)
-        # distance_policy = wasserstein_distance(expert_p_flow.val, self.p_flow.val)
-        #
-        # # 计算均值场分布的 Wasserstein 距离
-        # dev_mean_field = wasserstein_distance(self.mf_flow.val.ravel(), expert_mf_flow.val.ravel())
-        #
-        # # 对于策略分布，我们需要对每个时间步和每个状态的策略进行迭代计算
-        # dev_policy_list = []
-        # for t in range(self.p_flow.val.shape[0]):  # 遍历所有时间步
-        #     for s in range(self.p_flow.val.shape[1]):  # 遍历所有状态
-        #         # 计算当前状态下的策略分布之间的 Wasserstein 距离
-        #         w_dist = wasserstein_distance(self.p_flow.val[t, s, :], expert_p_flow.val[t, s, :])
-        #         # 将距离加权后加入列表
-        #         dev_policy_list.append(w_dist * expert_mf_flow.val[t, s])
-        #
-        # # 将所有加权的 Wasserstein 距离求和得到总的策略分布差异
-        # dev_policy = np.sum(dev_policy_list)
 
-        return [self.expected_return, dev_mean_field, dev_policy]

@@ -214,7 +214,7 @@ class MeanFieldModel(nn.Module):
         x = self.layers[:-1](x)  # Pass through all layers except the last one
         # x = self.dropout(x)
         x = self.layers[-1](x)  # Apply the final Sigmoid activation
-        none_zero = 1e-10
+        none_zero = 0
         x = x * (1 - none_zero) + none_zero
         return x
 

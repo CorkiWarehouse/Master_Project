@@ -45,19 +45,20 @@ class Env(Environment):
         self.dim = 1
 
 
-    def get_reward(self, state, action, mean_field,h = 0):
+    def get_reward(self, state, action, mean_field,h = 0,lam=1):
 
         # Here we give the external part will be the left
         # And right this action will give the influnce on this System
         # we use the MF to represent this world
 
-        left = h * self.state_option[state.val[0]]
+        # 获取与动作对应的自旋值
+        a_j = self.action_option[int(action.val[0])]  # 动作自旋（-1 或 +1）
 
-        lamed = 1
+        # 计算平均磁化强度（均值场）
+        m = np.dot(mean_field.val, self.state_option)  # 平均磁化强度
 
-        right = mean_field.val[state.val[0]] * self.action_option[action.val[0]]
-
-        reward = left + 0.5 * lamed * right
+        # 奖励函数：r = h * a_j + lambda * a_j * m
+        reward = h * a_j +  lam * a_j * m
 
 
         return Reward(reward = reward)
@@ -103,6 +104,25 @@ class Env(Environment):
 
 
         return next_mean_field
+
+    # def advance(self, policy, mean_field) -> MeanField:
+    #     next_mean_field = MeanField(mean_field=None, s=self.state_count)
+    #     next_mean_field.val = np.zeros(self.state_count)
+    #
+    #     for s in range(self.state_count):
+    #         for a in range(self.action_count):
+    #             action_prob = policy.val[s, a]
+    #             next_state_index = int(a)  # Next state is determined by action
+    #             next_mean_field.val[next_state_index] += mean_field.val[s] * action_prob
+    #
+    #     # Normalize the mean field
+    #     total = np.sum(next_mean_field.val)
+    #     if total > 1e-12:
+    #         next_mean_field.val /= total
+    #     else:
+    #         next_mean_field.val = np.ones(self.state_count) / self.state_count
+    #
+    #     return next_mean_field
 
     '''
     In article it is deterministic.
@@ -150,12 +170,9 @@ class Env(Environment):
     # this is because that our action will directly
     # give the results so we just need to all the states
     def get_neighbors(self, state, mean_field = None):
-        # Convert state_index to x, y coordinates
-        x = self.state_option[state]
 
         neighbors = []
 
         for d in range(self.state_count):
             neighbors.append(d)
-
         return np.array(neighbors)
