@@ -16,7 +16,7 @@ class Env(Environment):
         self.action_count = 3   # Three possible actions: move left, stay, move right
 
         # Define possible states and actions
-        self.state_option = [i for i in range(self.state_count)]  # Positions 0 to 99
+        self.state_option = [i for i in range(self.state_count)]  # Positions 0 to 30
         self.action_option = [-1, 0, 1]  # Actions: left (-1), stay (0), right (+1)
 
         self.bar_position = 15  # Position of the bar along the beach

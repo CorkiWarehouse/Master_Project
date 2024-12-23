@@ -36,6 +36,11 @@ class Env(Environment):
 
         self.state_count = 2
         self.action_count = 2
+        # 将state_option拓展为[-1, -0.5, 0.5, 1],这样有4个状态
+        # self.state_option = [-1, -0.5, 0.5, 1]
+        # self.action_option = [-1, -0.5, 0.5, 1]
+        # self.state_count = 4
+        # self.action_count = 4
 
         # here is the variables that is used in the PINN
         self.time_unit = 1
@@ -45,23 +50,31 @@ class Env(Environment):
         self.dim = 1
 
 
-    def get_reward(self, state, action, mean_field,h = 0,lam=1):
+    # def get_reward(self, state, action, mean_field,h = 0,lam=1):
+    #
+    #     # Here we give the external part will be the left
+    #     # And right this action will give the influnce on this System
+    #     # we use the MF to represent this world
+    #
+    #     # 获取与动作对应的自旋值
+    #     a_j = self.action_option[int(action.val[0])]  # 动作自旋（-1 或 +1）
+    #
+    #     # 计算平均磁化强度（均值场）
+    #     m = np.dot(mean_field.val, self.state_option)  # 平均磁化强度
+    #
+    #     # 奖励函数：r = h * a_j + lambda * a_j * m
+    #     reward = h * a_j +  lam * a_j * m
+    #
+    #
+    #     return Reward(reward = reward)
 
-        # Here we give the external part will be the left
-        # And right this action will give the influnce on this System
-        # we use the MF to represent this world
-
-        # 获取与动作对应的自旋值
-        a_j = self.action_option[int(action.val[0])]  # 动作自旋（-1 或 +1）
-
-        # 计算平均磁化强度（均值场）
-        m = np.dot(mean_field.val, self.state_option)  # 平均磁化强度
-
-        # 奖励函数：r = h * a_j + lambda * a_j * m
-        reward = h * a_j +  lam * a_j * m
-
-
-        return Reward(reward = reward)
+    def get_reward(self, state, action, mean_field, h=0, lam=1):
+        a_j = self.action_option[int(action.val[0])]
+        m = np.dot(mean_field.val, self.state_option)
+        # 加入一个小噪声项 epsilon
+        epsilon = np.random.normal(0, 0.01)
+        reward = h * a_j + lam * a_j * m + epsilon
+        return Reward(reward=reward)
 
     def advance(self, policy, mean_field) -> MeanField:
         # init

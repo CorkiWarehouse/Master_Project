@@ -52,9 +52,11 @@ class Expert(object):
         
     '''
 
-    def compute_ermfne(self):
+    def compute_ermfne(self, min_s=None):
         mf_flow = MeanFieldFlow(mean_field_flow=None, s=self.env.state_count, t=self.horizon)
         p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
+        # prev_distance = None
+        # max_percentage_drop = 0.90
         for _ in range(MAX):
             p_flow = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
             q_values = PolicyFlow(policy_flow=None, s=self.env.state_count, t=self.horizon, a=self.env.action_count)
@@ -110,12 +112,36 @@ class Expert(object):
                 mf = self.env.advance(Policy(policy=p_flow.val[t - 1]), MeanField(mean_field=mf_flow.val[t - 1]))
                 mf_flow_next.val[t] = mf.val
 
+            # 使用归一化后的MSE作为距离度量
+            def normalized_mse(x, y):
+                return torch.nn.MSELoss()(x, y) / (torch.norm(x) * torch.norm(y) + 1e-10)
+
+            current_distance = normalized_mse(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val))
+
             # check the distance between new and old mean field flows
             # sinkhorn = geomloss.SamplesLoss('sinkhorn')
             # distance = np.array([sinkhorn(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) for t in range(0, self.horizon)])
-            distance = torch.nn.MSELoss(reduction='sum', size_average=True)
+            distance = torch.nn.MSELoss(reduction='mean', size_average=True)
             print(distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)))
-            if distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val)) < MIN:
+            current_distance = distance(torch.from_numpy(mf_flow_next.val), torch.from_numpy(mf_flow.val))
+            if self.env.dim != 1:
+                min_s = 1e-5
+            else:
+                min_s = 1e-10
+
+            # if prev_distance is not None:
+            #     # Calculate the percentage drop
+            #     percentage_drop = (prev_distance.item() - current_distance.item()) / prev_distance.item()
+            #
+            #     if percentage_drop > max_percentage_drop:  # If the drop is too large
+            #         print(percentage_drop)
+            #         print(prev_distance.item())
+            #         print(current_distance.item())
+            #         print(f"Rejecting update: Distance dropped by more than {max_percentage_drop * 100}%")
+            #         continue  # Skip this iteration and retain the previous state
+
+
+            if current_distance < min_s:
                 # compute expected return under equilibrium and terminate iteration
                 print("in")
                 for s in range(0, self.env.state_count):
@@ -130,8 +156,13 @@ class Expert(object):
                 # continue iteration
                 mf_flow = mf_flow_next
 
+            prev_distance = current_distance
+
         self.mf_flow = mf_flow
         self.p_flow = p_flow
+
+
+
 
     # def compute_ermfne(self):
     #     # Initialize mean field flow
@@ -246,45 +277,85 @@ class Expert(object):
                 data[i].actions[t] = a
         return data
 
+    # def generate_trajectories_from_policy_flow(self, num_game_play: int, num_traj: int, current_policy_flow,
+    #                                            current_mean_field_flow, deterministic=False):
+    #     states = [i for i in range(self.env.state_count)]  # State space
+    #     actions = [i for i in range(self.env.action_count)]  # Action space
+    #     assert (current_mean_field_flow is not None) and (self.p_flow is not None)
+    #
+    #     data = [Trajectory(states=None, actions=None, horizon=self.horizon) for _ in range(num_game_play * num_traj)]
+    #
+    #     for i in range(num_game_play * num_traj):
+    #         # Sample the initial state (possibly from a given initial distribution)
+    #         # and we need to change this numpy.int to int
+    #         s = int(np.random.choice(states, 1, p=current_mean_field_flow.val[0, :])[0])
+    #         data[i].states[0] = s
+    #
+    #         for t in range(self.horizon):
+    #             # Sample action based on the current policy flow
+    #             # For we have all the 0 but 1, so that the argmax can get
+    #             # Still we need the int type
+    #             current_policy_flow.val[t, s, :] = (current_policy_flow.val[t, s, :] /
+    #                                                 sum(current_policy_flow.val[t, s, :]))
+    #
+    #             a = np.argmax(current_policy_flow.val[t, s, :]) if deterministic else \
+    #                 np.random.choice(actions, 1, p=current_policy_flow.val[t, s, :])[0]
+    #
+    #             a = int(a)
+    #
+    #             # print(type(a))
+    #             # print(type(int(a)))
+    #             # print(type(s))
+    #             data[i].actions[t] = a
+    #
+    #             # Compute the next state based on the current state and action
+    #             # Assuming the environment has a method `next_state` to compute this
+    #             if t < self.horizon - 1:  # Check to prevent indexing error on the last step
+    #                 s_next = self.env.dynamics(State(state=s), Action(action=a), MeanField(
+    #                     mean_field=current_mean_field_flow.val[
+    #                         t]))  # Update this method as per your environment dynamics
+    #                 data[i].states[t + 1] = s_next.val[0]
+    #                 s = int(s_next.val[0])  # Update current state to the next state
+    #
+    #     return data
+
     def generate_trajectories_from_policy_flow(self, num_game_play: int, num_traj: int, current_policy_flow,
                                                current_mean_field_flow, deterministic=False):
-        states = [i for i in range(self.env.state_count)]  # State space
-        actions = [i for i in range(self.env.action_count)]  # Action space
-        assert (current_mean_field_flow is not None) and (self.p_flow is not None)
+        states = [i for i in range(self.env.state_count)]
+        actions = [i for i in range(self.env.action_count)]
+        assert current_mean_field_flow is not None
 
         data = [Trajectory(states=None, actions=None, horizon=self.horizon) for _ in range(num_game_play * num_traj)]
 
         for i in range(num_game_play * num_traj):
-            # Sample the initial state (possibly from a given initial distribution)
-            # and we need to change this numpy.int to int
-            s = int(np.random.choice(states, 1, p=current_mean_field_flow.val[0, :])[0])
+            # 采样初始状态
+            s = int(np.random.choice(states, p=current_mean_field_flow.val[0, :]))
             data[i].states[0] = s
 
             for t in range(self.horizon):
-                # Sample action based on the current policy flow
-                # For we have all the 0 but 1, so that the argmax can get
-                # Still we need the int type
-                current_policy_flow.val[t, s, :] = (current_policy_flow.val[t, s, :] /
-                                                    sum(current_policy_flow.val[t, s, :]))
+                # 获取策略概率并归一化
+                policy_probs = current_policy_flow.val[t, s, :].copy()
+                sum_probs = sum(policy_probs)
+                if sum_probs > 0:
+                    policy_probs /= sum_probs
+                else:
+                    policy_probs = np.ones_like(policy_probs) / len(policy_probs)
 
-                a = np.argmax(current_policy_flow.val[t, s, :]) if deterministic else \
-                    np.random.choice(actions, 1, p=current_policy_flow.val[t, s, :])[0]
+                # 选择动作
+                if deterministic:
+                    max_actions = np.flatnonzero(policy_probs == policy_probs.max())
+                    a = int(np.random.choice(max_actions))
+                else:
+                    a = int(np.random.choice(actions, p=policy_probs))
 
-                a = int(a)
-
-                # print(type(a))
-                # print(type(int(a)))
-                # print(type(s))
                 data[i].actions[t] = a
 
-                # Compute the next state based on the current state and action
-                # Assuming the environment has a method `next_state` to compute this
-                if t < self.horizon - 1:  # Check to prevent indexing error on the last step
-                    s_next = self.env.dynamics(State(state=s), Action(action=a), MeanField(
-                        mean_field=current_mean_field_flow.val[
-                            t]))  # Update this method as per your environment dynamics
+                # 计算下一个状态
+                if t < self.horizon - 1:
+                    s_next = self.env.dynamics(State(state=s), Action(action=a),
+                                               MeanField(mean_field=current_mean_field_flow.val[t]))
                     data[i].states[t + 1] = s_next.val[0]
-                    s = int(s_next.val[0])  # Update current state to the next state
+                    s = int(s_next.val[0])
 
         return data
 

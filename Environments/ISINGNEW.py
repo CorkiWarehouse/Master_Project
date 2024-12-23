@@ -18,7 +18,6 @@ class Env(Environment):
         self.position_unit = 1  # Set to 1 for consistency
 
         self.init_mf = None
-        self.dim = 1
 
     def get_reward(self, state, action, mean_field, h=0, lam=1):
         # Action spin value (-1 or +1)
