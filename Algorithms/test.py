@@ -722,8 +722,8 @@ class TEST(IRL):
         tau = 0.99
 
         while epoch < max_epoch:
-            if epoch == 0:
-                loss_history = []
+            # if epoch == 0:
+            #     loss_history = []
             start_time = time.time()
             if epoch == 0:
                 current_mf_flow = init_est_expert_mf_flow.copy()
@@ -882,9 +882,9 @@ class TEST(IRL):
                     for g in optimizer_meanfield.param_groups:
                         g['lr'] = learning_rate * 0.5
 
-                for _ in range(int(10)):
+                for _ in range(int(0.5 * max_epoch)):
                     if self.env.dim == 1:
-                        self.train_mean_field_dim_1_new2(
+                        self.train_mean_field_dim_1_new3(
                             max_epoch, learning_rate, max_grad_norm, num_of_units,
                             mean_field_model, optimizer_meanfield,
                             alpha=0.2,

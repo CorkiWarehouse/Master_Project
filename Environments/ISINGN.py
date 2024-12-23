@@ -338,8 +338,11 @@ class Env(Environment):
 
     def get_neighbors(self, state, mean_field=None):
         """
-        Typically for a mean-field approach, we don't need local neighbors.
-        But if your IRL code calls get_neighbors, return something consistent.
+        In the mean field game version, individual neighbors are not considered.
+        The interaction is with the overall mean field.
+        This method can return all possible states.
         """
-        return np.array([0,1])  # trivially all states
-
+        if self.state_option[state] == 1:
+            return np.array([0, 1])
+        else:
+            return np.array([1,0])

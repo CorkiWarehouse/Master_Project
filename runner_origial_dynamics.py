@@ -148,12 +148,12 @@ if __name__ == '__main__':
             # validation_expert.compute_ermfne()  # 得到验证用的expert策略和mean field
 
             # 使用validation_expert的mf_flow和p_flow计算差异
-            piairl_expected_return, piairl_dev_mf, piairl_dev_p = piirl.divergence_sparse(
+            piairl_expected_return, piairl_dev_mf, piairl_dev_p = piirl.divergence(
                 expert_mf_flow=expert.mf_flow,
                 expert_p_flow=expert.p_flow
             )
 
-            npiairl_expected_return, npiairl_dev_mf, npiairl_dev_p = npiirl.divergence_sparse(
+            npiairl_expected_return, npiairl_dev_mf, npiairl_dev_p = npiirl.divergence(
                 expert_mf_flow=expert.mf_flow,
                 expert_p_flow=expert.p_flow
             )

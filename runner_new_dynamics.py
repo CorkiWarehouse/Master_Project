@@ -43,81 +43,80 @@ if __name__ == '__main__':
     expert = Expert(env=env, horizon=arglist.horizon)
     expert.compute_ermfne()
 
-    for _ in range(5):
-        for run in range(10):
-            print('================== Run #' + str(run) + '=========================')
+    for run in range(10):
+        print('================== Run #' + str(run) + '=========================')
 
-            for num_game_play in range(1, arglist.max_num_game_plays + 1):
-                # 初始化推断器
-                piirl = TEST(
-                    data_expert=None,
-                    env=env,
-                    horizon=arglist.horizon,
-                    device=arglist.device,
-                    num_tra=arglist.num_traj,
-                    num_game=arglist.max_num_game_plays
-                )
-                npimfirl = NPIIRL(
-                    data_expert=None,
-                    env=env,
-                    horizon=arglist.horizon,
-                    device=arglist.device,
-                    num_tra=arglist.num_traj,
-                    num_game=arglist.max_num_game_plays
-                )
+        for num_game_play in range(1, arglist.max_num_game_plays + 1):
+            # 初始化推断器
+            piirl = TEST(
+                data_expert=None,
+                env=env,
+                horizon=arglist.horizon,
+                device=arglist.device,
+                num_tra=arglist.num_traj,
+                num_game=arglist.max_num_game_plays
+            )
+            npimfirl = NPIIRL(
+                data_expert=None,
+                env=env,
+                horizon=arglist.horizon,
+                device=arglist.device,
+                num_tra=arglist.num_traj,
+                num_game=arglist.max_num_game_plays
+            )
 
-                # 加载模型时显式指定 map_location="cuda:0"
-                npimfirl.load_model(
-                    arglist.save_model_dir
-                    + 'original_dynamics/ISINGN/10/2024_12_20_145445/'
-                    + 'npimfirl_'
-                    + str(num_game_play)
-                    + '_'
-                    + str(run)
-                    + '.pt',
-                    map_location="cuda:0"  # <-- 新增 map_location
-                )
-                piirl.load_model(
-                    arglist.save_model_dir
-                    + 'original_dynamics/ISINGN/10/2024_12_20_145445/'
-                    + 'pimfirl_'
-                    + str(num_game_play)
-                    + '_'
-                    + str(run)
-                    + '.pt',
-                    map_location="cuda:0"  # <-- 新增 map_location
-                )
+            # 加载模型时显式指定 map_location="cuda:0"
+            npimfirl.load_model(
+                arglist.save_model_dir
+                + 'original_dynamics/ISINGNEW/10/2024_12_20_152315/'
+                + 'npimfirl_'
+                + str(num_game_play)
+                + '_'
+                + str(run)
+                + '.pt',
+                map_location="cuda:0"  # <-- 新增 map_location
+            )
+            piirl.load_model(
+                arglist.save_model_dir
+                + 'original_dynamics/ISINGNEW/10/2024_12_20_152315/'
+                + 'pimfirl_'
+                + str(num_game_play)
+                + '_'
+                + str(run)
+                + '.pt',
+                map_location="cuda:0"  # <-- 新增 map_location
+            )
 
-                # 计算与专家的差异
-                npimfirl_expected_return, npimfirl_dev_mf, npimfirl_dev_p = npimfirl.divergence(
-                    expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow
-                )
-                piirl_expected_return, piirl_dev_mf, piirl_dev_p = piirl.divergence(
-                    expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow
-                )
+            # 计算与专家的差异
+            npimfirl_expected_return, npimfirl_dev_mf, npimfirl_dev_p = npimfirl.divergence(
+                expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow
+            )
+            piirl_expected_return, piirl_dev_mf, piirl_dev_p = piirl.divergence(
+                expert_mf_flow=expert.mf_flow, expert_p_flow=expert.p_flow
+            )
 
-                # 记录结果
-                new_data = pd.DataFrame(
+            # 记录结果
+            new_data = pd.DataFrame(
+                [
                     [
-                        [
-                            run,
-                            'PIIRL',
-                            abs(float(expert.expected_return) - float(piirl_expected_return)),
-                            float(piirl_dev_mf),
-                            float(piirl_dev_p),
-                        ],
-                        [
-                            run,
-                            'NPIFIRL',
-                            abs(float(expert.expected_return) - float(npimfirl_expected_return)),
-                            float(npimfirl_dev_mf),
-                            float(npimfirl_dev_p),
-                        ],
-                        [run, 'EXPERT', 0.0, 0.0, 0.0],
+                        run,
+                        'PIIRL',
+                        abs(float(expert.expected_return) - float(piirl_expected_return)),
+                        float(piirl_dev_mf),
+                        float(piirl_dev_p),
                     ],
-                    columns=['samples', 'method', 'Difference_return', 'Dev.MF', 'Dev.Policy']
-                )
-                results = pd.concat([results, new_data], ignore_index=True)
+                    [
+                        run,
+                        'NPIFIRL',
+                        abs(float(expert.expected_return) - float(npimfirl_expected_return)),
+                        float(npimfirl_dev_mf),
+                        float(npimfirl_dev_p),
+                    ],
+                    [run, 'EXPERT', 0.0, 0.0, 0.0],
+                ],
+                columns=['samples', 'method', 'Difference_return', 'Dev.MF', 'Dev.Policy']
+            )
+            results = pd.concat([results, new_data], ignore_index=True)
 
     # 统计
     grouped = results.groupby('method')

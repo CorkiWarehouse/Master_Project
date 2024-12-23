@@ -807,10 +807,10 @@ class IRL(object):
 
     def divergence(self, expert_mf_flow, expert_p_flow):
         # 确保已经有 rmfne 和 expected_return 计算结果
-        if not self.ermfne_computed:
-            self.recover_ermfne()
-        if not self.expected_return_computed:
-            self.recover_expected_return()
+        # if not self.ermfne_computed:
+        self.recover_ermfne()
+        # if not self.expected_return_computed:
+        self.recover_expected_return()
 
         # 优化 KL 计算：
         # 假设我们希望计算 KL(expert||ours)
